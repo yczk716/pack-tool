@@ -742,37 +742,23 @@ async function dlExt(){
     if(!resp.ok){ st.textContent = '下载失败：HTTP ' + resp.status; return; }
     const total = +(resp.headers.get('Content-Length') || 0);
     const reader = resp.body.getReader();
-    // 优先弹出"另存为"让用户直接指定文件夹保存（Edge/Chrome 支持）；取消或不支持则存到默认下载文件夹
-    let writable = null, picked = false;
-    if(window.showSaveFilePicker){
-      try{
-        const fh = await window.showSaveFilePicker({suggestedName: 'OPPO登录态回传扩展.zip'});
-        writable = await fh.createWritable(); picked = true;
-      }catch(e){
-        if(e && e.name === 'AbortError'){ st.textContent = '已取消下载'; return; }
-      }
-    }
     const chunks = []; let got = 0, lastPct = -1;
     while(true){
       const r = await reader.read();
       if(r.done) break;
-      if(writable) await writable.write(r.value);
       chunks.push(r.value); got += r.value.length;
       const pct = total ? Math.round(got * 100 / total) : 0;
       if(pct !== lastPct){ bar(pct, '下载中 ' + (total ? pct + '%' : (got / 1024).toFixed(0) + ' KB')); lastPct = pct; }
     }
-    if(writable){ await writable.close(); }
-    else {
-      const blob = new Blob(chunks, {type: 'application/zip'});
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a'); a.href = url; a.download = 'OPPO登录态回传扩展.zip';
-      document.body.appendChild(a); a.click(); a.remove();
-      setTimeout(() => URL.revokeObjectURL(url), 5000);
-    }
+    const blob = new Blob(chunks, {type: 'application/zip'});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a'); a.href = url; a.download = 'oppo-ext.zip';
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 5000);
     bar(100, '完成');
     st.innerHTML = '<span style="color:var(--brand-dark)">✓ 下载完成（' + (got / 1024).toFixed(0)
-      + ' KB，已保存' + (picked ? '到你指定的位置' : '到浏览器下载文件夹') + '）</span>。'
-      + '下一步：解压 → 地址栏输入 edge://extensions → 打开「开发者模式」→「加载解压缩的扩展」选择解压出的文件夹；装好后点 ⚡ 扩展回传 即可。';
+      + ' KB，已直接保存到浏览器下载文件夹）</span>。'
+      + '下一步：解压出 oppo-ext 文件夹 → 地址栏输入 edge://extensions → 打开「开发者模式」→「加载解压缩的扩展」选择该文件夹；装好后点 ⚡ 扩展回传 即可。';
   }catch(e){
     st.textContent = '下载失败：' + (e.message || e);
   }finally{
@@ -1060,9 +1046,9 @@ class Handler(BaseHTTPRequestHandler):
             self.send_response(200)
             self.send_header("Content-Type", "application/zip")
             self.send_header("Content-Length", str(len(data)))
-            encoded = _up.quote("OPPO登录态回传扩展.zip")
+            encoded = _up.quote("oppo-ext.zip")
             self.send_header("Content-Disposition",
-                             f"attachment; filename=\"extension.zip\"; filename*=UTF-8''{encoded}")
+                             f"attachment; filename=\"oppo-ext.zip\"; filename*=UTF-8''{encoded}")
             self.send_header("Cache-Control", "no-store")
             self.end_headers()
             self.wfile.write(data)
