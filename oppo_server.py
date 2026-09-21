@@ -232,6 +232,17 @@ def _login_worker():
             _state["login_running"] = False
 
 
+def _probe_state_file(path):
+    """探测指定 storage_state 文件的会话有效性（gensign，无副作用）。"""
+    try:
+        from oppo_api import OppoApi
+        api = OppoApi(storage_state=path, log=lambda m: None)
+        return bool(api.gensign())
+    except Exception as e:
+        _log("会话探测失败: " + str(e)[:100])
+        return False
+
+
 def _probe_session():
     """用已存 cookie 调 gensign 探测会话有效性（无副作用）。
 
@@ -240,13 +251,7 @@ def _probe_session():
     - app/list 用 {"page","page_size","fuzzy"} 调用必返 300001（参数不对，误报失效），不能用；
     - gensign.json 校验登录态：有效返回 sign，失效 errno=800003，且无副作用 —— 用它。
     """
-    try:
-        from oppo_api import OppoApi
-        api = OppoApi(storage_state=STATE_FILE, log=lambda m: None)
-        return bool(api.gensign())
-    except Exception as e:
-        _log("会话探测失败: " + str(e)[:100])
-        return False
+    return _probe_state_file(STATE_FILE)
 
 
 def start_login():
@@ -289,8 +294,10 @@ def check_login():
 def save_cookie_state(state):
     """保存前端上传的登录文件（storage_state.json 原文 dict）。
 
-    防覆盖校验：扩展/脚本自动回传时若浏览器未登录，会上传近空 cookie；
-    直接落盘会毁掉服务器上现有的有效登录态，故数量过少或缺关键 token 直接拒绝。
+    防覆盖校验分两级：
+    ① 数量过少或缺关键 token 直接拒绝（未登录浏览器的近空 cookie）；
+    ② 候选 cookie 先落临时文件做 gensign 预校验——候选失效且服务器当前有效时拒绝覆盖，
+       防止"从另一个未登录浏览器回传，冲掉服务器上原本可用的登录态"。
     """
     if not isinstance(state, dict) or not state.get("cookies"):
         raise ValueError("文件格式不对：应为此前导出的 storage_state.json（含 cookies 字段）")
@@ -299,9 +306,24 @@ def save_cookie_state(state):
     if len(cookies) < 5 or "sdkLoginToken" not in names:
         raise ValueError("上传的 cookie 仅 %d 条（需 ≥5 且含 sdkLoginToken），"
                          "疑似未登录状态，已拒绝保存（防止覆盖服务器上的有效登录态）" % len(cookies))
-    with open(STATE_FILE, "w", encoding="utf-8") as f:
+    tmp = STATE_FILE + ".candidate"
+    with open(tmp, "w", encoding="utf-8") as f:
         json.dump(state, f, ensure_ascii=False)
-    _log("已保存上传的登录文件（cookie " + str(len(cookies)) + " 条）")
+    cand_ok = _probe_state_file(tmp)
+    if not cand_ok:
+        # gensign 偶发瞬时 800003，失败后二次确认防误报
+        time.sleep(1.5)
+        cand_ok = _probe_state_file(tmp)
+    if not cand_ok:
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+        if _state.get("logged_in") and os.path.exists(STATE_FILE):
+            raise ValueError("回传的登录态校验未通过，且服务器当前登录态有效，已拒绝覆盖（请重新登录 OPPO 后再回传）")
+        raise ValueError("回传的登录态校验未通过（服务器当前也没有有效登录态），请重新登录 OPPO 后再回传")
+    os.replace(tmp, STATE_FILE)
+    _log("已保存上传的登录文件（cookie " + str(len(cookies)) + " 条，预校验通过）")
 
 
 def save_pasted_cookies(text):

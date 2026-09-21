@@ -772,7 +772,7 @@ async function extPush(){
   }
   msg.textContent = '正在通过扩展收集并回传登录态…';
   try{
-    const r = await chrome.runtime.sendMessage(EXT_ID, {type:'push_oppo'});
+    const r = await chrome.runtime.sendMessage(EXT_ID, {type:'push_oppo', autoOpen:true});
     if(r && r.ok){ msg.textContent = '✓ ' + r.message; checkLogin(); }
     else if(r){ msg.textContent = '✗ ' + r.message; }
     else { msg.textContent = '扩展无响应：请确认扩展已安装并已启用（edge://extensions）'; }
@@ -903,12 +903,13 @@ EXT_README = (
     "3. 打开「开发者模式」开关\n"
     "4. 点「加载解压缩的扩展」，选择解压出的 oppo-ext 文件夹\n"
     "5. 完成。之后只要这个浏览器里登录着 OPPO 开放平台，扩展就会自动工作\n\n"
-                      "使用方式：\n"
-                      "- 自动：扩展每 10 分钟自动回传一次登录态，保持服务器登录态始终最新\n"
-                      "- 失效提醒：OPPO 会话失效（约 1~2 小时，服务端固定时效无法续命）时，"
-                      "扩展会弹系统通知，点击直达 OPPO 登录页；重新登录后扩展自动回传恢复\n"
-                      "- 手动：点浏览器工具栏的「OPPO 登录态回传」图标 → 立即回传\n"
-                      "- 网页：工具页「验证登录态」旁的「⚡ 扩展回传」按钮一键触发\n\n"
+    "使用方式：\n"
+    "- 自动：扩展每 10 分钟自动回传一次登录态，保持服务器登录态最新\n"
+    "- 失效提醒：OPPO 会话失效（服务端固定时效约 1~2 小时，无法客户端续命）时弹系统通知，\n"
+    "  点通知直达 OPPO 登录页；重登后扩展自动回传并关闭登录页，无需其他操作\n"
+    "- 手动回传（popup 按钮 / 工具页⚡扩展回传）：若检测到登录态已失效，会自动打开 OPPO 登录页，\n"
+    "  登录成功后自动回传更新并关闭该页面\n"
+    "- 兼容 Chrome / Edge 等 Chromium 内核浏览器（标准 MV3，无私有 API）\n\n"
     "验证是否生效：扩展图标上会短暂显示 OK（成功）/ X（失败）角标；"
     "工具页的 OPPO 徽章变绿即为登录态有效。\n"
 )
@@ -1048,7 +1049,8 @@ class Handler(BaseHTTPRequestHandler):
             with _zf.ZipFile(buf, "w", _zf.ZIP_DEFLATED) as z:
                 for f in need:
                     z.writestr("oppo-ext/" + f, open(os.path.join(ext_dir, f), "rb").read())
-                z.writestr("oppo-ext/安装说明.txt", readme.encode("utf-8-sig"))
+                # 文件名用 ASCII：Windows 自带解压对 UTF-8 文件名不兼容，中文文件名会导致解压报错/乱码
+                z.writestr("oppo-ext/readme.txt", EXT_README.encode("utf-8-sig"))
             data = buf.getvalue()
             self.send_response(200)
             self.send_header("Content-Type", "application/zip")
