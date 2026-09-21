@@ -319,9 +319,21 @@ def save_cookie_state(state):
             os.remove(tmp)
         except OSError:
             pass
-        if _state.get("logged_in") and os.path.exists(STATE_FILE):
-            raise ValueError("回传的登录态校验未通过，且服务器当前登录态有效，已拒绝覆盖（请重新登录 OPPO 后再回传）")
-        raise ValueError("回传的登录态校验未通过（服务器当前也没有有效登录态），请重新登录 OPPO 后再回传")
+        # 关键：若候选与服务器当前是同一个会话（sdkLoginToken 相同），
+        # 候选预校验失败即说明当前会话已死，必须同步刷新缓存状态，
+        # 否则页面徽章会一直显示旧的"已登录"（用户需手动点验证才刷新）。
+        try:
+            cur = json.load(open(STATE_FILE, encoding="utf-8")) if os.path.exists(STATE_FILE) else {}
+        except Exception:
+            cur = {}
+        cur_token = next((c.get("value") for c in cur.get("cookies", []) if isinstance(c, dict) and c.get("name") == "sdkLoginToken"), None)
+        cand_token = next((c.get("value") for c in cookies if c.get("name") == "sdkLoginToken"), None)
+        if cur_token is not None and cur_token == cand_token:
+            with _lock:
+                _state["logged_in"] = False
+                _state["login_msg"] = "会话已失效（回传校验未通过），请重新登录"
+            raise ValueError("回传的登录态校验未通过（与服务器当前为同一会话，已同步标记失效），请重新登录 OPPO")
+        raise ValueError("回传的登录态校验未通过，已拒绝保存（不影响服务器当前登录态），请重新登录 OPPO 后再回传")
     os.replace(tmp, STATE_FILE)
     _log("已保存上传的登录文件（cookie " + str(len(cookies)) + " 条，预校验通过）")
 
