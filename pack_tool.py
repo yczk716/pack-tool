@@ -495,9 +495,9 @@ PAGE = """
       <span id="login-badge" class="pill no"><span class="dot"></span>OPPO 检查中…</span>
       <span id="vivo-badge" class="pill no"><span class="dot"></span>vivo 检查中…</span>
       <button class="mini" onclick="window.open('https://open.oppomobile.com/','_blank')">打开 OPPO 登录页</button>
-      <a class="mini" href="/api/oppo/extension.zip" download
-         style="text-decoration:none;display:inline-flex;align-items:center">⬇ 下载扩展</a>
+      <button class="mini" id="dl-ext-btn" onclick="dlExt()">⬇ 下载扩展</button>
       <button class="mini" onclick="extPush()">⚡ 扩展回传</button>
+      <span id="dl-ext-status" class="hint" style="margin:0"></span>
     </div>
     <div class="hint" style="margin-top:6px"><b>扩展方案（零操作）</b>：下载解压 → 浏览器扩展管理页（edge://extensions）开「开发者模式」→「加载解压缩的扩展」选解压文件夹 → 装好后扩展每 30 分钟自动回传登录态，网页「⚡ 扩展回传」按钮也可一键触发。</div>
         <details>
@@ -726,6 +726,59 @@ function checkLogin(){
   fetch('/api/oppo/check_login', {method:'POST'}).then(r=>r.json()).then(v=>renderLogin(v));
 }
 const EXT_ID = 'hkpnpedmkmnhkfmehodmbedcabihpbni';
+async function dlExt(){
+  const st = $('dl-ext-status');
+  const btn = $('dl-ext-btn');
+  const bar = (pct, txt) => {
+    st.innerHTML = '<span style="display:inline-flex;align-items:center;gap:6px;vertical-align:middle">'
+      + '<span style="width:120px;height:6px;background:var(--line,#e5e7eb);border-radius:3px;overflow:hidden">'
+      + '<span style="display:block;height:100%;width:' + pct + '%;background:var(--brand,#409eff)"></span></span>'
+      + '<span>' + txt + '</span></span>';
+  };
+  try{
+    btn.disabled = true;
+    bar(0, '正在请求下载…');
+    const resp = await fetch('/api/oppo/extension.zip');
+    if(!resp.ok){ st.textContent = '下载失败：HTTP ' + resp.status; return; }
+    const total = +(resp.headers.get('Content-Length') || 0);
+    const reader = resp.body.getReader();
+    // 优先弹出"另存为"让用户直接指定文件夹保存（Edge/Chrome 支持）；取消或不支持则存到默认下载文件夹
+    let writable = null, picked = false;
+    if(window.showSaveFilePicker){
+      try{
+        const fh = await window.showSaveFilePicker({suggestedName: 'OPPO登录态回传扩展.zip'});
+        writable = await fh.createWritable(); picked = true;
+      }catch(e){
+        if(e && e.name === 'AbortError'){ st.textContent = '已取消下载'; return; }
+      }
+    }
+    const chunks = []; let got = 0, lastPct = -1;
+    while(true){
+      const r = await reader.read();
+      if(r.done) break;
+      if(writable) await writable.write(r.value);
+      chunks.push(r.value); got += r.value.length;
+      const pct = total ? Math.round(got * 100 / total) : 0;
+      if(pct !== lastPct){ bar(pct, '下载中 ' + (total ? pct + '%' : (got / 1024).toFixed(0) + ' KB')); lastPct = pct; }
+    }
+    if(writable){ await writable.close(); }
+    else {
+      const blob = new Blob(chunks, {type: 'application/zip'});
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a'); a.href = url; a.download = 'OPPO登录态回传扩展.zip';
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 5000);
+    }
+    bar(100, '完成');
+    st.innerHTML = '<span style="color:var(--brand-dark)">✓ 下载完成（' + (got / 1024).toFixed(0)
+      + ' KB，已保存' + (picked ? '到你指定的位置' : '到浏览器下载文件夹') + '）</span>。'
+      + '下一步：解压 → 地址栏输入 edge://extensions → 打开「开发者模式」→「加载解压缩的扩展」选择解压出的文件夹；装好后点 ⚡ 扩展回传 即可。';
+  }catch(e){
+    st.textContent = '下载失败：' + (e.message || e);
+  }finally{
+    btn.disabled = false;
+  }
+}
 async function extPush(){
   const msg = $('login-msg');
   if(typeof chrome === 'undefined' || !chrome.runtime || !chrome.runtime.sendMessage){
