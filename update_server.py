@@ -9,7 +9,9 @@ import paramiko
 HOST = "101.43.50.231"
 PEM = r"D:\Downloads\work.pem"
 FILES = ["pack_tool.py", "oppo_server.py", "oppo_api.py", "vivo_api.py",
-         "export_login.py", "login_oppo_dist.bat", "login_oppo_cdp.py"]  # 相对 pack-tool/，上传到 /opt/pack-tool/
+         "export_login.py", "login_oppo_dist.bat", "login_oppo_cdp.py",
+         "oppo-ext/manifest.json", "oppo-ext/background.js",
+         "oppo-ext/popup.html", "oppo-ext/popup.js"]  # 相对 pack-tool/，上传到 /opt/pack-tool/
 PORT = 8000
 
 
@@ -106,7 +108,14 @@ def main():
         if not os.path.exists(local):
             print(f"!! 跳过（本地不存在）: {fname}", flush=True)
             continue
-        sftp.put(local, "/opt/pack-tool/" + fname)
+        remote = "/opt/pack-tool/" + fname
+        rdir = os.path.dirname(remote)
+        try:
+            sftp.stat(rdir)
+        except FileNotFoundError:
+            sftp.mkdir(rdir)
+            print(f"已创建远端目录 {rdir}", flush=True)
+        sftp.put(local, remote)
         print(f"已上传 {fname}", flush=True)
     sftp.close()
 

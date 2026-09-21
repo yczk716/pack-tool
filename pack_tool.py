@@ -495,10 +495,13 @@ PAGE = """
       <span id="login-badge" class="pill no"><span class="dot"></span>OPPO 检查中…</span>
       <span id="vivo-badge" class="pill no"><span class="dot"></span>vivo 检查中…</span>
       <button class="mini" onclick="window.open('https://open.oppomobile.com/','_blank')">打开 OPPO 登录页</button>
+      <a class="mini" href="/api/oppo/extension.zip" download
+         style="text-decoration:none;display:inline-flex;align-items:center">⬇ 下载扩展（推荐）</a>
+      <button class="mini" onclick="extPush()">⚡ 扩展回传</button>
       <a class="mini" href="/api/oppo/login_helper.zip" download
          style="text-decoration:none;display:inline-flex;align-items:center">⬇ 下载登录助手</a>
     </div>
-    <div class="hint" style="margin-top:6px">下载解压后双击 <b>login_oppo.bat</b>：在你日常使用的浏览器里<b>新开标签页</b>登录 OPPO（不双开浏览器），登录态自动回传，本页徽章自动变绿（vivo 列无需登录）。</div>
+    <div class="hint" style="margin-top:6px"><b>扩展方案（零操作，推荐）</b>：下载解压 → 浏览器扩展管理页（edge://extensions）开「开发者模式」→「加载解压缩的扩展」选解压文件夹 → 装好后扩展每 30 分钟自动回传登录态，网页「⚡ 扩展回传」按钮也可一键触发。<br>备选：下载登录助手解压后双击 <b>login_oppo.bat</b>，在你日常使用的浏览器里<b>新开标签页</b>登录 OPPO（不双开浏览器），登录态自动回传。</div>
         <details>
       <summary>备用方式：粘贴 Cookie / 上传登录文件</summary>
       <div class="hint">粘贴法：在 OPPO 标签页 <b>F12 → Network → 刷新 → 点第一个请求 → Request Headers → 复制 cookie: 整行</b>，粘贴到下面提交。</div>
@@ -517,7 +520,7 @@ PAGE = """
       <button class="mini" style="margin-top:6px;padding:8px 16px" onclick="pasteVivoCookie()">提交 vivo Cookie</button>
       <span id="vivo-msg" class="hint" style="margin-left:8px"></span>
     </details>
-    <div id="login-msg" class="hint">未登录：优先用上面的傻瓜式登录；或展开备用方式手动提交登录态。</div>
+    <div id="login-msg" class="hint">未登录：推荐安装「⬇ 下载扩展」后点 ⚡ 扩展回传，一键完成；或展开备用方式手动提交登录态。</div>
 
     <div class="step"><span class="n">2</span>待验证名称 <small>每行一个</small></div>
     <textarea id="onames" rows="5" placeholder="例如：&#10;星空阅读&#10;极速清理大师&#10;全能工具箱"></textarea>
@@ -723,6 +726,22 @@ async function pasteVivoCookie(){
 function checkLogin(){
   $('login-msg').textContent = '正在验证登录态…';
   fetch('/api/oppo/check_login', {method:'POST'}).then(r=>r.json()).then(v=>renderLogin(v));
+}
+const EXT_ID = 'hkpnpedmkmnhkfmehodmbedcabihpbni';
+async function extPush(){
+  const msg = $('login-msg');
+  if(typeof chrome === 'undefined' || !chrome.runtime || !chrome.runtime.sendMessage){
+    msg.textContent = '当前环境不支持扩展通信：请先「⬇ 下载扩展」并按说明安装（一次即可）'; return;
+  }
+  msg.textContent = '正在通过扩展收集并回传登录态…';
+  try{
+    const r = await chrome.runtime.sendMessage(EXT_ID, {type:'push_oppo'});
+    if(r && r.ok){ msg.textContent = '✓ ' + r.message; checkLogin(); }
+    else if(r){ msg.textContent = '✗ ' + r.message; }
+    else { msg.textContent = '扩展无响应：请确认扩展已安装并已启用（edge://extensions）'; }
+  }catch(e){
+    msg.textContent = '扩展未安装或未启用：请点「⬇ 下载扩展」，解压后到 edge://extensions 打开开发者模式加载（一次即可）。(' + (e.message||e) + ')';
+  }
 }
 function uploadCookie(inp){
   const f = inp.files[0];
@@ -991,6 +1010,44 @@ class Handler(BaseHTTPRequestHandler):
             encoded = _up.quote("OPPO登录助手.zip")
             self.send_header("Content-Disposition",
                              f"attachment; filename=\"login_helper.zip\"; filename*=UTF-8''{encoded}")
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(data)
+        elif self.path.startswith("/api/oppo/extension.zip"):
+            import io as _io
+            import zipfile as _zf
+            import urllib.parse as _up
+            here = os.path.dirname(os.path.abspath(__file__))
+            ext_dir = os.path.join(here, "oppo-ext")
+            need = ["manifest.json", "background.js", "popup.html", "popup.js"]
+            if not all(os.path.exists(os.path.join(ext_dir, f)) for f in need):
+                return self._send(404, {"error": "扩展文件未部署"})
+            readme = ("OPPO 登录态回传扩展 - 安装说明\n"
+                      "======================================\n"
+                      "一次性安装（约 30 秒）：\n"
+                      "1. 解压本压缩包到任意文件夹（解压后不要删，扩展需要常驻）\n"
+                      "2. 打开浏览器扩展管理页：地址栏输入 chrome://extensions（Edge 是 edge://extensions）\n"
+                      "3. 打开右上角/左侧的「开发者模式」开关\n"
+                      "4. 点「加载解压缩的扩展」，选择解压出来的文件夹\n"
+                      "5. 完成。之后只要这个浏览器里登录着 OPPO 开放平台，扩展就会自动工作\n\n"
+                      "使用方式：\n"
+                      "- 自动：扩展每 30 分钟自动回传一次登录态，完全免操作\n"
+                      "- 手动：点浏览器工具栏的「OPPO 登录态回传」图标 → 立即回传\n"
+                      "- 网页：工具页「验证登录态」旁的「扩展回传」按钮一键触发\n\n"
+                      "验证是否生效：扩展图标上会短暂显示 OK（成功）/ X（失败）角标；"
+                      "工具页的 OPPO 徽章变绿即为登录态有效。\n")
+            buf = _io.BytesIO()
+            with _zf.ZipFile(buf, "w", _zf.ZIP_DEFLATED) as z:
+                for f in need:
+                    z.writestr("oppo-ext/" + f, open(os.path.join(ext_dir, f), "rb").read())
+                z.writestr("oppo-ext/安装说明.txt", readme.encode("utf-8-sig"))
+            data = buf.getvalue()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/zip")
+            self.send_header("Content-Length", str(len(data)))
+            encoded = _up.quote("OPPO登录态回传扩展.zip")
+            self.send_header("Content-Disposition",
+                             f"attachment; filename=\"extension.zip\"; filename*=UTF-8''{encoded}")
             self.send_header("Cache-Control", "no-store")
             self.end_headers()
             self.wfile.write(data)

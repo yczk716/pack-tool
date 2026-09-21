@@ -69,3 +69,9 @@ vivo_create.html
 # ---- 历史抓包/中间产物 ----
 *.txt
 !README.md
+
+# ---- 扩展冒烟/密钥（不提交）----
+.ext-smoke-profile/
+ext_key.pem
+ext_pub.der
+ext_id.txt

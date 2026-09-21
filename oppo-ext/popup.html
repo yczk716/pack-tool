@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<style>
+  body { width: 300px; margin: 0; padding: 14px; font: 13px/1.6 "Microsoft YaHei", sans-serif; color: #303133; }
+  h3 { margin: 0 0 8px; font-size: 14px; }
+  .row { margin: 8px 0; }
+  .num { font-weight: bold; color: #409eff; }
+  button { width: 100%; padding: 8px 0; border: 0; border-radius: 4px; background: #409eff; color: #fff; font-size: 13px; cursor: pointer; }
+  button:hover { background: #337ecc; }
+  button:disabled { background: #a0cfff; cursor: default; }
+  #status { margin-top: 10px; padding: 8px; border-radius: 4px; background: #f4f4f5; word-break: break-all; display: none; }
+  .tip { color: #909399; font-size: 12px; margin-top: 10px; }
+</style>
+</head>
+<body>
+  <h3>OPPO 登录态回传</h3>
+  <div class="row">检测到 OPPO 相关 cookie：<span class="num" id="count">-</span> 条</div>
+  <div class="row"><button id="push">立即回传到验证工具</button></div>
+  <div id="status"></div>
+  <div class="tip">服务器每 30 分钟也会自动收一次；日常只需保持本浏览器处于登录状态即可。</div>
+  <script src="popup.js"></script>
+</body>
+</html>

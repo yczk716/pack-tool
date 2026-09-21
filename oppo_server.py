@@ -287,12 +287,21 @@ def check_login():
 
 
 def save_cookie_state(state):
-    """保存前端上传的登录文件（storage_state.json 原文 dict）。"""
+    """保存前端上传的登录文件（storage_state.json 原文 dict）。
+
+    防覆盖校验：扩展/脚本自动回传时若浏览器未登录，会上传近空 cookie；
+    直接落盘会毁掉服务器上现有的有效登录态，故数量过少或缺关键 token 直接拒绝。
+    """
     if not isinstance(state, dict) or not state.get("cookies"):
         raise ValueError("文件格式不对：应为此前导出的 storage_state.json（含 cookies 字段）")
+    cookies = [c for c in state["cookies"] if isinstance(c, dict)]
+    names = {c.get("name", "") for c in cookies}
+    if len(cookies) < 5 or "sdkLoginToken" not in names:
+        raise ValueError("上传的 cookie 仅 %d 条（需 ≥5 且含 sdkLoginToken），"
+                         "疑似未登录状态，已拒绝保存（防止覆盖服务器上的有效登录态）" % len(cookies))
     with open(STATE_FILE, "w", encoding="utf-8") as f:
         json.dump(state, f, ensure_ascii=False)
-    _log("已保存上传的登录文件（cookie " + str(len(state["cookies"])) + " 条）")
+    _log("已保存上传的登录文件（cookie " + str(len(cookies)) + " 条）")
 
 
 def save_pasted_cookies(text):
