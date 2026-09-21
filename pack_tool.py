@@ -498,7 +498,7 @@ PAGE = """
       <a class="mini" href="/api/oppo/login_helper.zip" download
          style="text-decoration:none;display:inline-flex;align-items:center">⬇ 下载登录助手</a>
     </div>
-    <div class="hint" style="margin-top:6px">下载解压后双击 <b>login_oppo.bat</b>：弹浏览器登录 OPPO → 登录态自动回传，本页徽章自动变绿（vivo 列无需登录）。</div>
+    <div class="hint" style="margin-top:6px">下载解压后双击 <b>login_oppo.bat</b>：在你日常使用的浏览器里<b>新开标签页</b>登录 OPPO（不双开浏览器），登录态自动回传，本页徽章自动变绿（vivo 列无需登录）。</div>
         <details>
       <summary>备用方式：粘贴 Cookie / 上传登录文件</summary>
       <div class="hint">粘贴法：在 OPPO 标签页 <b>F12 → Network → 刷新 → 点第一个请求 → Request Headers → 复制 cookie: 整行</b>，粘贴到下面提交。</div>
@@ -967,16 +967,21 @@ class Handler(BaseHTTPRequestHandler):
             py_p = os.path.join(here, "export_login.py")
             if not (os.path.exists(bat_p) and os.path.exists(py_p)):
                 return self._send(404, {"error": "登录助手文件未部署"})
-            readme = ("OPPO 登录助手使用说明\n"
-                      "======================\n"
+            readme = ("OPPO 登录助手使用说明（标签页模式）\n"
+                      "======================================\n"
                       "1. 解压本压缩包到任意文件夹\n"
-                      "2. 双击 login_oppo.bat（需本机安装 Edge 浏览器，脚本会自动补齐依赖）\n"
-                      "3. 在弹出的浏览器窗口完成 OPPO 登录\n"
-                      "4. 登录态自动回传服务器，回到工具页徽章自动变绿\n\n"
-                      "提示：脚本会复用上次登录记录，多数情况无需重复输密码。\n")
+                      "2. 双击 login_oppo.bat（脚本自动补齐依赖）\n"
+                      "3. 脚本会在你日常使用的浏览器里新开一个 OPPO 标签页（不是双开浏览器）；"
+                      "若浏览器已记住 OPPO 登录，会直接自动回传，无需任何操作\n"
+                      "4. 登录完成后只关闭 OPPO 那个标签页，浏览器原样保留，工具页徽章自动变绿\n\n"
+                      "注意：首次运行若提示需要关闭浏览器，请关掉所有浏览器窗口后按回车，"
+                      "脚本会以调试模式重新拉起并恢复原有标签页。\n"
+                      "备用：老模式（独立窗口）可运行 python export_login.py\n")
             buf = _io.BytesIO()
             with _zf.ZipFile(buf, "w", _zf.ZIP_DEFLATED) as z:
+                cdp_p = os.path.join(here, "login_oppo_cdp.py")
                 z.writestr("OPPO登录助手/login_oppo.bat", open(bat_p, "rb").read())
+                z.writestr("OPPO登录助手/login_oppo_cdp.py", open(cdp_p, "rb").read())
                 z.writestr("OPPO登录助手/export_login.py", open(py_p, "rb").read())
                 z.writestr("OPPO登录助手/使用说明.txt", readme.encode("utf-8-sig"))
             data = buf.getvalue()

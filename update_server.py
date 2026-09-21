@@ -9,7 +9,7 @@ import paramiko
 HOST = "101.43.50.231"
 PEM = r"D:\Downloads\work.pem"
 FILES = ["pack_tool.py", "oppo_server.py", "oppo_api.py", "vivo_api.py",
-         "export_login.py", "login_oppo_dist.bat"]  # 相对 pack-tool/，上传到 /opt/pack-tool/
+         "export_login.py", "login_oppo_dist.bat", "login_oppo_cdp.py"]  # 相对 pack-tool/，上传到 /opt/pack-tool/
 PORT = 8000
 
 
