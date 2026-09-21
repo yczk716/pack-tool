@@ -10,7 +10,7 @@ HOST = "101.43.50.231"
 PEM = r"D:\Downloads\work.pem"
 FILES = ["pack_tool.py", "oppo_server.py", "oppo_api.py", "vivo_api.py",
          "oppo-ext/manifest.json", "oppo-ext/background.js",
-         "oppo-ext/popup.html", "oppo-ext/popup.js"]  # 相对 pack-tool/，上传到 /opt/pack-tool/
+         "oppo-ext/popup.html", "oppo-ext/popup.js", "oppo-ext/icon128.png"]  # 相对 pack-tool/，上传到 /opt/pack-tool/
 PORT = 8000
 
 

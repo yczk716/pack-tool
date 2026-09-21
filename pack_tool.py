@@ -499,7 +499,7 @@ PAGE = """
       <button class="mini" onclick="extPush()">⚡ 扩展回传</button>
       <span id="dl-ext-status" class="hint" style="margin:0"></span>
     </div>
-    <div class="hint" style="margin-top:6px"><b>扩展方案（零操作）</b>：点「⬇ 下载扩展」下载 oppo-ext.zip → 解压出 oppo-ext 文件夹 → edge://extensions 开「开发者模式」→「加载解压缩的扩展」选该文件夹 → 装好后扩展每 30 分钟自动回传登录态，网页「⚡ 扩展回传」按钮也可一键触发。</div>
+    <div class="hint" style="margin-top:6px"><b>扩展方案（准保活）</b>：点「⬇ 下载扩展」下载 oppo-ext.zip → 解压出 oppo-ext 文件夹 → edge://extensions 开「开发者模式」→「加载解压缩的扩展」选该文件夹 → 装好后扩展每 10 分钟自动回传登录态；OPPO 会话失效时弹系统通知，点击直达登录页，重登后自动恢复。</div>
         <details>
       <summary>备用方式：粘贴 Cookie / 上传登录文件</summary>
       <div class="hint">粘贴法：在 OPPO 标签页 <b>F12 → Network → 刷新 → 点第一个请求 → Request Headers → 复制 cookie: 整行</b>，粘贴到下面提交。</div>
@@ -903,10 +903,12 @@ EXT_README = (
     "3. 打开「开发者模式」开关\n"
     "4. 点「加载解压缩的扩展」，选择解压出的 oppo-ext 文件夹\n"
     "5. 完成。之后只要这个浏览器里登录着 OPPO 开放平台，扩展就会自动工作\n\n"
-    "使用方式：\n"
-    "- 自动：扩展每 30 分钟自动回传一次登录态，完全免操作\n"
-    "- 手动：点浏览器工具栏的「OPPO 登录态回传」图标 → 立即回传\n"
-    "- 网页：工具页「验证登录态」旁的「⚡ 扩展回传」按钮一键触发\n\n"
+                      "使用方式：\n"
+                      "- 自动：扩展每 10 分钟自动回传一次登录态，保持服务器登录态始终最新\n"
+                      "- 失效提醒：OPPO 会话失效（约 1~2 小时，服务端固定时效无法续命）时，"
+                      "扩展会弹系统通知，点击直达 OPPO 登录页；重新登录后扩展自动回传恢复\n"
+                      "- 手动：点浏览器工具栏的「OPPO 登录态回传」图标 → 立即回传\n"
+                      "- 网页：工具页「验证登录态」旁的「⚡ 扩展回传」按钮一键触发\n\n"
     "验证是否生效：扩展图标上会短暂显示 OK（成功）/ X（失败）角标；"
     "工具页的 OPPO 徽章变绿即为登录态有效。\n"
 )
@@ -1038,7 +1040,7 @@ class Handler(BaseHTTPRequestHandler):
             import urllib.parse as _up
             here = os.path.dirname(os.path.abspath(__file__))
             ext_dir = os.path.join(here, "oppo-ext")
-            need = ["manifest.json", "background.js", "popup.html", "popup.js"]
+            need = ["manifest.json", "background.js", "popup.html", "popup.js", "icon128.png"]
             if not all(os.path.exists(os.path.join(ext_dir, f)) for f in need):
                 return self._send(404, {"error": "扩展文件未部署"})
             readme = EXT_README
