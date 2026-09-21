@@ -1,0 +1,71 @@
+# ---- 密钥/登录态（绝不提交）----
+oppo_state.json
+vivo_state.json
+storage_state.json
+oppo-profile/
+*-state.json
+
+# ---- 运行产物 ----
+output/
+downloads/
+__pycache__/
+oppo_report*.csv
+*.log
+_log*.txt
+_*_log.txt
+_*_out.txt
+_*_result.txt
+_*_exit.txt
+_probe*.txt
+_pip.txt
+_syntax.txt
+_e2e_*
+_cap*
+
+# ---- 探针/环境数据 ----
+probe_app.json
+
+# ---- 本地测试脚本（含抓包/凭据残留，不入库）----
+*_test.py
+*_test2.py
+*_test3.py
+test_*.py
+*_probe*.py
+probe_*.py
+verify_*.py
+diag*.py
+capture*.py
+diff_capture*.py
+cleanup*.py
+deploy_*.py
+dryrun*.py
+e2e_*.py
+explore_*.py
+analyze_*.py
+batch_api.py
+batch_check.py
+account_check.py
+check_*.py
+chromium_fix*.py
+cookie_*.py
+download_deps.py
+inject_page.py
+swap_panels.py
+split_full_verify.py
+sessionize.py
+fix_bs_and_check.py
+page_render_test.py
+vivo_probe1.py
+deploy.sh
+test_headful.py
+keystore/
+bin/
+
+# ---- 页面源稿（已内嵌进 pack_tool.py 的 PAGE）----
+new_page.html
+vivo_app_local.js
+vivo_create.html
+
+# ---- 历史抓包/中间产物 ----
+*.txt
+!README.md
