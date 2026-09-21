@@ -726,36 +726,6 @@ function checkLogin(){
   fetch('/api/oppo/check_login', {method:'POST'}).then(r=>r.json()).then(v=>renderLogin(v));
 }
 const EXT_ID = 'hkpnpedmkmnhkfmehodmbedcabihpbni';
-function parseZipEntries(buf){
-  const dv = new DataView(buf);
-  let i = buf.byteLength - 22;
-  while(i >= 0 && dv.getUint32(i, true) !== 0x06054b50) i--;
-  if(i < 0) throw new Error('zip 解析失败');
-  const count = dv.getUint16(i + 10, true);
-  let off = dv.getUint32(i + 16, true);
-  const list = [];
-  for(let k = 0; k < count; k++){
-    if(dv.getUint32(off, true) !== 0x02014b50) break;
-    const method = dv.getUint16(off + 10, true);
-    const compSize = dv.getUint32(off + 20, true);
-    const nameLen = dv.getUint16(off + 28, true);
-    const extraLen = dv.getUint16(off + 30, true);
-    const cmtLen = dv.getUint16(off + 32, true);
-    const lho = dv.getUint32(off + 42, true);
-    const nLen = dv.getUint16(lho + 26, true);
-    const eLen = dv.getUint16(lho + 28, true);
-    const name = new TextDecoder().decode(new Uint8Array(buf, lho + 30, nLen));
-    list.push({name: name, method: method, compSize: compSize, start: lho + 30 + nLen + eLen});
-    off += 46 + nameLen + extraLen + cmtLen;
-  }
-  return list;
-}
-async function zipEntryBytes(buf, en){
-  const raw = new Uint8Array(buf, en.start, en.compSize);
-  if(en.method === 0) return raw;
-  const stream = new Blob([raw]).stream().pipeThrough(new DecompressionStream('deflate-raw'));
-  return new Uint8Array(await new Response(stream).arrayBuffer());
-}
 async function dlExt(){
   const st = $('dl-ext-status');
   const btn = $('dl-ext-btn');
@@ -788,25 +758,24 @@ async function dlExt(){
       if(e && e.name === 'AbortError'){ st.textContent = '已取消下载'; return; }
       throw e;
     }
-    bar(0, '正在下载…');
-    const resp = await fetch('/api/oppo/extension.zip');
+    bar(0, '正在获取文件列表…');
+    const resp = await fetch('/api/oppo/ext_files');
     if(!resp.ok){ st.textContent = '下载失败：HTTP ' + resp.status; return; }
-    const buf = await resp.arrayBuffer();
-    const entries = parseZipEntries(buf);
+    const data = await resp.json();
+    const files = data.files || [];
+    if(!files.length){ st.textContent = '下载失败：服务器文件列表为空'; return; }
     let done = 0;
-    for(const en of entries){
-      const rel = en.name.startsWith('oppo-ext/') ? en.name.slice(9) : en.name;
-      if(!rel) continue;
-      bar(10 + Math.round(80 * done / entries.length), '写入 ' + rel);
-      const bytes = await zipEntryBytes(buf, en);
-      const fh = await dir.getFileHandle(rel, {create: true});
+    for(const f of files){
+      bar(10 + Math.round(80 * done / files.length), '写入 ' + f.name + '（' + (done + 1) + '/' + files.length + '）');
+      const bytes = Uint8Array.from(atob(f.b64), c => c.charCodeAt(0));
+      const fh = await dir.getFileHandle(f.name, {create: true});
       const w = await fh.createWritable();
       await w.write(bytes);
       await w.close();
       done++;
     }
     bar(100, '完成');
-    st.innerHTML = '<span style="color:var(--brand-dark)">✓ 已直接保存 ' + done + ' 个扩展文件到所选文件夹</span>。'
+    st.innerHTML = '<span style="color:var(--brand-dark)">✓ 已逐个直接写入 ' + done + ' 个扩展文件到所选文件夹</span>。'
       + '下一步：地址栏输入 edge://extensions → 打开「开发者模式」→「加载解压缩的扩展」选择该文件夹，装好后点 ⚡ 扩展回传。全程无需解压。';
   }catch(e){
     st.textContent = '下载失败：' + (e.message || e);
@@ -943,6 +912,26 @@ startOppoPoll();
 """
 
 
+EXT_README = (
+    "OPPO 登录态回传扩展 - 安装说明\n"
+    "======================================\n"
+    "推荐方式（网页一键，无需解压）：\n"
+    "在工具页点「⬇ 下载扩展」→ 选择一个文件夹（可新建 oppo-ext）→ 5 个扩展文件逐个直接写入该文件夹。\n\n"
+    "手动方式（若手动拿到本 zip）：解压到任意文件夹（解压后不要删，扩展需要常驻）。\n\n"
+    "安装（两种方式通用）：\n"
+    "1. 打开浏览器扩展管理页：地址栏输入 chrome://extensions（Edge 是 edge://extensions）\n"
+    "2. 打开「开发者模式」开关\n"
+    "3. 点「加载解压缩的扩展」，选择包含 manifest.json 的文件夹\n"
+    "4. 完成。之后只要这个浏览器里登录着 OPPO 开放平台，扩展就会自动工作\n\n"
+    "使用方式：\n"
+    "- 自动：扩展每 30 分钟自动回传一次登录态，完全免操作\n"
+    "- 手动：点浏览器工具栏的「OPPO 登录态回传」图标 → 立即回传\n"
+    "- 网页：工具页「验证登录态」旁的「⚡ 扩展回传」按钮一键触发\n\n"
+    "验证是否生效：扩展图标上会短暂显示 OK（成功）/ X（失败）角标；"
+    "工具页的 OPPO 徽章变绿即为登录态有效。\n"
+)
+
+
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, *a):
         pass
@@ -1063,6 +1052,19 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, {"vnc": {}, "running": False, "total": 0, "done": 0,
                                         "results": [], "logs": ["OPPO 模块未部署（缺 oppo_server.py 或 playwright）"]})
             self._send(200, oppo_server.progress(self._session_id()))
+        elif self.path.startswith("/api/oppo/ext_files"):
+            import base64 as _b64
+            here = os.path.dirname(os.path.abspath(__file__))
+            ext_dir = os.path.join(here, "oppo-ext")
+            files = []
+            for f in ["manifest.json", "background.js", "popup.html", "popup.js"]:
+                p = os.path.join(ext_dir, f)
+                if not os.path.exists(p):
+                    return self._send(500, {"error": "扩展文件缺失: " + f})
+                with open(p, "rb") as fh:
+                    files.append({"name": f, "b64": _b64.b64encode(fh.read()).decode("ascii")})
+            files.append({"name": "安装说明.txt", "b64": _b64.b64encode(EXT_README.encode("utf-8-sig")).decode("ascii")})
+            self._send(200, {"files": files})
         elif self.path.startswith("/api/oppo/extension.zip"):
             import io as _io
             import zipfile as _zf
@@ -1072,22 +1074,7 @@ class Handler(BaseHTTPRequestHandler):
             need = ["manifest.json", "background.js", "popup.html", "popup.js"]
             if not all(os.path.exists(os.path.join(ext_dir, f)) for f in need):
                 return self._send(404, {"error": "扩展文件未部署"})
-            readme = ("OPPO 登录态回传扩展 - 安装说明\n"
-                      "======================================\n"
-                      "推荐方式（网页一键，无需解压）：\n"
-                      "在工具页点「⬇ 下载扩展」→ 选择一个文件夹（可新建 oppo-ext）→ 扩展文件直接写入该文件夹。\n\n"
-                      "手动方式（若手动拿到本 zip）：解压到任意文件夹（解压后不要删，扩展需要常驻）。\n\n"
-                      "安装（两种方式通用）：\n"
-                      "1. 打开浏览器扩展管理页：地址栏输入 chrome://extensions（Edge 是 edge://extensions）\n"
-                      "2. 打开「开发者模式」开关\n"
-                      "3. 点「加载解压缩的扩展」，选择包含 manifest.json 的文件夹\n"
-                      "4. 完成。之后只要这个浏览器里登录着 OPPO 开放平台，扩展就会自动工作\n\n"
-                      "使用方式：\n"
-                      "- 自动：扩展每 30 分钟自动回传一次登录态，完全免操作\n"
-                      "- 手动：点浏览器工具栏的「OPPO 登录态回传」图标 → 立即回传\n"
-                      "- 网页：工具页「验证登录态」旁的「⚡ 扩展回传」按钮一键触发\n\n"
-                      "验证是否生效：扩展图标上会短暂显示 OK（成功）/ X（失败）角标；"
-                      "工具页的 OPPO 徽章变绿即为登录态有效。\n")
+            readme = EXT_README
             buf = _io.BytesIO()
             with _zf.ZipFile(buf, "w", _zf.ZIP_DEFLATED) as z:
                 for f in need:
