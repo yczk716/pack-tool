@@ -499,7 +499,7 @@ PAGE = """
       <button class="mini" onclick="extPush()">⚡ 扩展回传</button>
       <span id="dl-ext-status" class="hint" style="margin:0"></span>
     </div>
-    <div class="hint" style="margin-top:6px"><b>扩展方案（零操作）</b>：点「⬇ 下载扩展」选择一个文件夹（可新建名为 oppo-ext 的文件夹）→ 扩展文件直接写入，无需解压 → edge://extensions 开「开发者模式」→「加载解压缩的扩展」选该文件夹 → 装好后扩展每 30 分钟自动回传登录态，网页「⚡ 扩展回传」按钮也可一键触发。</div>
+    <div class="hint" style="margin-top:6px"><b>扩展方案（零操作）</b>：点「⬇ 下载扩展」下载 oppo-ext.zip → 解压出 oppo-ext 文件夹 → edge://extensions 开「开发者模式」→「加载解压缩的扩展」选该文件夹 → 装好后扩展每 30 分钟自动回传登录态，网页「⚡ 扩展回传」按钮也可一键触发。</div>
         <details>
       <summary>备用方式：粘贴 Cookie / 上传登录文件</summary>
       <div class="hint">粘贴法：在 OPPO 标签页 <b>F12 → Network → 刷新 → 点第一个请求 → Request Headers → 复制 cookie: 整行</b>，粘贴到下面提交。</div>
@@ -737,46 +737,28 @@ async function dlExt(){
   };
   try{
     btn.disabled = true;
-    if(!window.showDirectoryPicker || typeof DecompressionStream === 'undefined'){
-      st.textContent = '当前浏览器不支持直接保存为文件夹，改为下载 zip 到下载文件夹（解压后使用）…';
-      bar(0, '正在下载…');
-      const resp = await fetch('/api/oppo/extension.zip');
-      if(!resp.ok){ st.textContent = '下载失败：HTTP ' + resp.status; return; }
-      const blob = await resp.blob();
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a'); a.href = url; a.download = 'oppo-ext.zip';
-      document.body.appendChild(a); a.click(); a.remove();
-      setTimeout(() => URL.revokeObjectURL(url), 5000);
-      bar(100, '完成');
-      st.innerHTML = '<span style="color:var(--brand-dark)">✓ 已下载 oppo-ext.zip 到下载文件夹</span>，解压后到 edge://extensions 用「加载解压缩的扩展」选择解压出的文件夹。';
-      return;
-    }
-    let dir;
-    try{
-      dir = await window.showDirectoryPicker({mode: 'readwrite'});
-    }catch(e){
-      if(e && e.name === 'AbortError'){ st.textContent = '已取消下载'; return; }
-      throw e;
-    }
-    bar(0, '正在获取文件列表…');
-    const resp = await fetch('/api/oppo/ext_files');
+    bar(0, '正在下载…');
+    const resp = await fetch('/api/oppo/extension.zip');
     if(!resp.ok){ st.textContent = '下载失败：HTTP ' + resp.status; return; }
-    const data = await resp.json();
-    const files = data.files || [];
-    if(!files.length){ st.textContent = '下载失败：服务器文件列表为空'; return; }
-    let done = 0;
-    for(const f of files){
-      bar(10 + Math.round(80 * done / files.length), '写入 ' + f.name + '（' + (done + 1) + '/' + files.length + '）');
-      const bytes = Uint8Array.from(atob(f.b64), c => c.charCodeAt(0));
-      const fh = await dir.getFileHandle(f.name, {create: true});
-      const w = await fh.createWritable();
-      await w.write(bytes);
-      await w.close();
-      done++;
+    const total = +(resp.headers.get('Content-Length') || 0);
+    const reader = resp.body.getReader();
+    const chunks = []; let got = 0, lastPct = -1;
+    while(true){
+      const r = await reader.read();
+      if(r.done) break;
+      chunks.push(r.value); got += r.value.length;
+      const pct = total ? Math.round(got * 100 / total) : 0;
+      if(pct !== lastPct){ bar(pct, '下载中 ' + (total ? pct + '%' : (got / 1024).toFixed(0) + ' KB')); lastPct = pct; }
     }
+    const blob = new Blob(chunks, {type: 'application/zip'});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a'); a.href = url; a.download = 'oppo-ext.zip';
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 5000);
     bar(100, '完成');
-    st.innerHTML = '<span style="color:var(--brand-dark)">✓ 已逐个直接写入 ' + done + ' 个扩展文件到所选文件夹</span>。'
-      + '下一步：地址栏输入 edge://extensions → 打开「开发者模式」→「加载解压缩的扩展」选择该文件夹，装好后点 ⚡ 扩展回传。全程无需解压。';
+    st.innerHTML = '<span style="color:var(--brand-dark)">✓ 下载完成（' + (got / 1024).toFixed(0)
+      + ' KB，已保存到浏览器下载文件夹）</span>。'
+      + '下一步：解压出 oppo-ext 文件夹 → 地址栏输入 edge://extensions → 打开「开发者模式」→「加载解压缩的扩展」选择该文件夹；装好后点 ⚡ 扩展回传 即可。';
   }catch(e){
     st.textContent = '下载失败：' + (e.message || e);
   }finally{
@@ -915,14 +897,12 @@ startOppoPoll();
 EXT_README = (
     "OPPO 登录态回传扩展 - 安装说明\n"
     "======================================\n"
-    "推荐方式（网页一键，无需解压）：\n"
-    "在工具页点「⬇ 下载扩展」→ 选择一个文件夹（可新建 oppo-ext）→ 5 个扩展文件逐个直接写入该文件夹。\n\n"
-    "手动方式（若手动拿到本 zip）：解压到任意文件夹（解压后不要删，扩展需要常驻）。\n\n"
-    "安装（两种方式通用）：\n"
-    "1. 打开浏览器扩展管理页：地址栏输入 chrome://extensions（Edge 是 edge://extensions）\n"
-    "2. 打开「开发者模式」开关\n"
-    "3. 点「加载解压缩的扩展」，选择包含 manifest.json 的文件夹\n"
-    "4. 完成。之后只要这个浏览器里登录着 OPPO 开放平台，扩展就会自动工作\n\n"
+    "安装（一次性，约 30 秒）：\n"
+    "1. 解压本压缩包到任意文件夹（解压后不要删，扩展需要常驻）\n"
+    "2. 打开浏览器扩展管理页：地址栏输入 chrome://extensions（Edge 是 edge://extensions）\n"
+    "3. 打开「开发者模式」开关\n"
+    "4. 点「加载解压缩的扩展」，选择解压出的 oppo-ext 文件夹\n"
+    "5. 完成。之后只要这个浏览器里登录着 OPPO 开放平台，扩展就会自动工作\n\n"
     "使用方式：\n"
     "- 自动：扩展每 30 分钟自动回传一次登录态，完全免操作\n"
     "- 手动：点浏览器工具栏的「OPPO 登录态回传」图标 → 立即回传\n"
@@ -1052,19 +1032,6 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, {"vnc": {}, "running": False, "total": 0, "done": 0,
                                         "results": [], "logs": ["OPPO 模块未部署（缺 oppo_server.py 或 playwright）"]})
             self._send(200, oppo_server.progress(self._session_id()))
-        elif self.path.startswith("/api/oppo/ext_files"):
-            import base64 as _b64
-            here = os.path.dirname(os.path.abspath(__file__))
-            ext_dir = os.path.join(here, "oppo-ext")
-            files = []
-            for f in ["manifest.json", "background.js", "popup.html", "popup.js"]:
-                p = os.path.join(ext_dir, f)
-                if not os.path.exists(p):
-                    return self._send(500, {"error": "扩展文件缺失: " + f})
-                with open(p, "rb") as fh:
-                    files.append({"name": f, "b64": _b64.b64encode(fh.read()).decode("ascii")})
-            files.append({"name": "安装说明.txt", "b64": _b64.b64encode(EXT_README.encode("utf-8-sig")).decode("ascii")})
-            self._send(200, {"files": files})
         elif self.path.startswith("/api/oppo/extension.zip"):
             import io as _io
             import zipfile as _zf
