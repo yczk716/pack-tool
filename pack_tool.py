@@ -673,11 +673,18 @@ async function doPack(){
 
 /* ================= OPPO 重名验证 ================= */
 let oppoTimer = null, lastLogLen = 0, oppoDone = false;
+let pollFailCount = 0;
 function oppoPoll(){
   fetch('/api/oppo/progress').then(r=>r.json()).then(d=>{
+    pollFailCount = 0;
     renderLogin(d.vnc || {});
     renderOppo(d);
-  }).catch(()=>{});
+  }).catch(()=>{
+    // 连续失败时明确提示，避免徽章永远卡在"检查中"
+    if(++pollFailCount >= 5){
+      ['login-badge','full-badge'].forEach(id => { const el = $(id); if(el){ el.className='pill no'; el.innerHTML='<span class="dot"></span>服务器无响应，请刷新页面'; } });
+    }
+  });
 }
 function startOppoPoll(){
   if(oppoTimer) return;

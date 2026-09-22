@@ -3,7 +3,7 @@
 // 失效处理：手动回传若服务器判定失效 → 自动打开 OPPO 登录页 → 登录成功后自动回传并关闭登录页
 const SERVER = "http://101.43.50.231:8000";
 const ALARM = "autoPush";
-const LOGIN_URL = "https://open.oppomobile.com/";
+const LOGIN_URL = "https://open.oppomobile.com/public/login/login_page.html";
 const NOTIF_ID = "oppo-expired";
 let loginTabId = null;
 let loginWaitTimer = null;
@@ -82,8 +82,9 @@ function clearExpiredFlag() {
 async function openLoginTab() {
   if (loginTabId != null) {
     try {
-      await chrome.tabs.get(loginTabId);
-      chrome.tabs.update(loginTabId, { active: true });
+      const t = await chrome.tabs.get(loginTabId);
+      await chrome.tabs.update(loginTabId, { active: true });
+      await chrome.windows.update(t.windowId, { focused: true });
       return;
     } catch (e) {
       loginTabId = null; // 标签已被关闭
@@ -92,6 +93,21 @@ async function openLoginTab() {
   try {
     const tab = await chrome.tabs.create({ url: LOGIN_URL });
     loginTabId = tab.id;
+  } catch (e) { /* ignore */ }
+}
+
+// 登录恢复成功后：激活/新建工具页标签并聚焦，让用户直接回到工具页
+async function focusToolPage() {
+  try {
+    const tabs = await chrome.tabs.query({ url: SERVER + "/*" });
+    let tab;
+    if (tabs && tabs.length) {
+      tab = tabs[0];
+      await chrome.tabs.update(tab.id, { active: true });
+    } else {
+      tab = await chrome.tabs.create({ url: SERVER + "/" });
+    }
+    await chrome.windows.update(tab.windowId, { focused: true });
   } catch (e) { /* ignore */ }
 }
 
@@ -119,11 +135,11 @@ async function pushNow(reason, autoOpen) {
     setBadge("X", "#f56c6c");
     const detail = data.error || data.login_msg || ("HTTP " + r.status);
     if (autoOpen) {
-      notify("OPPO 登录态已失效", "已自动打开 OPPO 登录页，请完成登录（记住密码的话点一下即可），登录后自动回传并关闭页面");
+      notify("OPPO 登录态已失效", "已自动打开 OPPO 登录页，请完成登录（浏览器会自动填充账号），成功后自动回传并返回工具页");
       openLoginTab();
-      return { ok: false, count: n, message: "登录态已失效，已自动打开 OPPO 登录页（登录后自动回传并关闭）：" + detail };
+      return { ok: false, count: n, message: "登录态已失效，已自动打开 OPPO 登录页（登录后自动回传并返回工具页）：" + detail };
     }
-    notify("OPPO 登录态已失效", "点击本通知打开 OPPO 登录页重新登录；登录后扩展会自动回传恢复");
+    notify("OPPO 登录态已失效", "点击本通知打开 OPPO 登录页重新登录；登录后扩展会自动回传并返回工具页");
     return { ok: false, count: n, message: "已回传 " + n + " 条，但服务器校验未通过：" + detail };
   } catch (e) {
     setBadge("X", "#f56c6c");
@@ -155,7 +171,7 @@ chrome.notifications.onClicked.addListener(function (id) {
   }
 });
 
-// 登录成功检测：sdkLoginToken 一旦出现/更新（说明用户刚完成登录）→ 自动回传 → 关闭登录页标签
+// 登录成功检测：sdkLoginToken 一旦出现/更新（说明用户刚完成登录）→ 自动回传 → 关登录页 → 返回工具页
 chrome.cookies.onChanged.addListener(function (info) {
   const c = info.cookie;
   if (!c || c.name !== "sdkLoginToken" || !c.value) return;
@@ -166,10 +182,11 @@ chrome.cookies.onChanged.addListener(function (info) {
     loginTabId = null;
     const r = await pushNow("after-login", false);
     if (r.ok) {
-      notify("OPPO 登录态已恢复", "新登录态已自动回传到验证工具");
+      notify("OPPO 登录态已恢复", "新登录态已自动回传，正在返回工具页");
       if (tid != null) {
         try { await chrome.tabs.remove(tid); } catch (e) { /* 已关闭 */ }
       }
+      focusToolPage();
     } else {
       loginTabId = tid; // 回传未通过，继续等待用户操作
     }
