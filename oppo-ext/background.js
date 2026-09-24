@@ -1,8 +1,10 @@
 // OPPO 登录态回传助手 - MV3 service worker（标准 API，兼容 Chrome / Edge）
-// 设计：完全被动——不弹通知、不自动定时检测，只在两种情况下动作：
-// ① 用户手动触发（popup 按钮 / 工具页⚡扩展回传 / 工具页验证时触发 login_redirect）
+// 设计：无通知、无页面打扰。仅两类动作：
+// ① 每 30 分钟静默回传一次最新 cookie（跟踪 OPPO 的 token 轮换，失败静默跳过，全程无感）
 // ② 登录页标签打开期间检测到 sdkLoginToken 变化（用户完成登录）→ 自动回传 → 关登录页 → 回工具页续跑验证
+// 手动触发：popup 按钮 / 工具页⚡扩展回传 / 工具页验证时触发 login_redirect
 const SERVER = "http://101.43.50.231:8000";
+const ALARM = "silentPush";
 const LOGIN_URL = "https://open.oppomobile.com/public/login/login_page.html";
 let loginTabId = null;
 let loginWaitTimer = null;
@@ -157,4 +159,30 @@ chrome.cookies.onChanged.addListener(function (info) {
       loginTabId = tid; // 回传未通过，继续等待
     }
   }, 2500); // 等 cookie 全部落定
+});
+
+// 每 30 分钟静默回传：只上传浏览器最新 cookie，跟踪 OPPO 的 token 轮换。
+// 不弹通知、不打开页面、不做任何检测判定；无 cookie 或服务器拒绝时静默跳过。
+async function pushSilent() {
+  try {
+    const state = await collectCookies();
+    if (!state.cookies.length) return; // 浏览器未登录，静默跳过
+    const r = await fetch(SERVER + "/api/oppo/upload_cookie", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(state)
+    });
+    if (r.ok) {
+      const data = await r.json();
+      if (data.logged_in) {
+        try { chrome.action.setBadgeText({ text: "" }); } catch (e) { /* ignore */ }
+      }
+      // 校验未通过：静默跳过（可能正在登录中，等下一轮或登录检测回传）
+    }
+  } catch (e) { /* 静默跳过 */ }
+}
+
+chrome.alarms.create(ALARM, { periodInMinutes: 30 });
+chrome.alarms.onAlarm.addListener(function (a) {
+  if (a.name === ALARM) pushSilent();
 });
