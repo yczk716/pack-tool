@@ -4,7 +4,7 @@
   "version": "1.0.0",
   "description": "把浏览器里 OPPO 开放平台的登录 cookie 一键回传到批量验证工具（网页按钮触发 / 每 30 分钟自动回传），全程无需下载任何脚本。",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAyRIPT522g7+oN/4pqGRuJFbGxloE3dlwAMEKYUuV9cr0cn9Mj53b3w7AxqDwhd4K4mHB6pAe9d+BKfTWwpV8FOmAF1sQXukKAAAwVRc7IwbayjwzYXkYdG7FypRaMKMMuksGhs7jz8cjIz2bHXW4PatQ5S5oO+DyzkASsdOfJ3WtzkyfbOn2ZkDuihxcljqgmJJXWyJqMOQY05ib8YsrPh45mjcrYEEV+O+IAanKFpMc9Ohm0Tvl9j+PSuZirVFg/OXO4R8hxDzraWuNO2QddGcgHEOwWp2LSryNV/UTnVgckV67s31u+yeNzSFABoz/qvBKgVFDQxu3JxjuoCGEZwIDAQAB",
-  "permissions": ["cookies", "alarms", "notifications"],
+  "permissions": ["cookies"],
   "host_permissions": [
     "*://*.oppomobile.com/*",
     "*://*.oppo.com/*",

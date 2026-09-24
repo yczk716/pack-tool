@@ -861,39 +861,94 @@ function renderOppo(d){
   });
   if(logs.length !== lastLogLen){ lastLogLen = logs.length; }
 }
+// ---- 登录态失效时的挂起/续跑机制 ----
+function savePending(kind, lines){
+  try{ localStorage.setItem('oppoPending', JSON.stringify({kind: kind, names: lines, ts: Date.now()})); }catch(e){}
+}
+function takePending(){
+  try{
+    const p = JSON.parse(localStorage.getItem('oppoPending') || 'null');
+    localStorage.removeItem('oppoPending');
+    if(p && p.names && p.names.length && Date.now() - p.ts < 1800000) return p;
+  }catch(e){}
+  return null;
+}
+async function tryLoginRedirect(){
+  try{
+    await chrome.runtime.sendMessage(EXT_ID, {type:'login_redirect'});
+    return true;
+  }catch(e){ return false; }
+}
 async function doOppoBatch(){
   const lines = $('onames').value.split('\\n').map(s=>s.trim()).filter(Boolean);
   if(!lines.length){ alert('请填写名称列表（每行一个）'); return; }
-  if(!confirm(`【仅名称判定】对 ${lines.length} 个名称直接判重（秒级）。\n使用常驻探针应用调判定接口（首次自动创建并保留），不打包、不传包、无残留。\n确定继续？`)) return;
   const go = $('gooppo');
-  go.disabled = true; go.textContent = '任务已提交…';
-  $('oresult').style.display = 'none'; oppoDone = false;
-  try {
-    const r = await fetch('/api/oppo/batch', {method:'POST', headers:{'Content-Type':'application/json'},
+  go.disabled = true; go.textContent = '提交中…';
+  let r;
+  try{
+    r = await fetch('/api/oppo/batch', {method:'POST', headers:{'Content-Type':'application/json'},
       body: JSON.stringify({names: lines, auto_delete: false, name_only: true})}).then(r=>r.json());
-    if(!r.ok){ alert(r.error || '提交失败'); }
-  } catch(e){ alert('请求失败: ' + e); }
+  }catch(e){ r = {ok:false, error:'请求失败: ' + e}; }
   go.disabled = false; go.textContent = '开始验证';
+  if(r.ok){ $('oresult').style.display = 'none'; oppoDone = false; return; }
+  if(r.need_login){
+    // 登录态失效：挂起任务 → 打开 OPPO 登录页 → 登录成功自动返回续跑
+    savePending('oppo', lines);
+    const ext = await tryLoginRedirect();
+    $('login-msg').textContent = ext
+      ? '登录态已失效：已自动打开 OPPO 登录页，完成登录后将自动返回并开始验证这 ' + lines.length + ' 个名称'
+      : '登录态已失效，且扩展未安装：请先「⬇ 下载扩展」安装（一次即可），或登录 OPPO 后再点开始验证';
+    return;
+  }
+  alert(r.error || '提交失败');
 }
 async function doFullBatch(){
   const lines = $('fnames').value.split('\\n').map(s=>s.trim()).filter(Boolean);
   if(!lines.length){ alert('请填写名称列表（每行一个）'); return; }
-  if(!confirm(`【完整验证】对 ${lines.length} 个名称执行：打包 → 创建应用 → 传包 → 判定 → 自动删除。\n每 5 个一批，验证并删除后继续下一批，全部完成账号零残留。\n确定继续？`)) return;
   const go = $('gofull');
-  go.disabled = true; go.textContent = '任务已提交…';
-  $('fresult').style.display = 'none'; oppoDone = false;
-  try {
-    const r = await fetch('/api/oppo/batch', {method:'POST', headers:{'Content-Type':'application/json'},
+  go.disabled = true; go.textContent = '提交中…';
+  let r;
+  try{
+    r = await fetch('/api/oppo/batch', {method:'POST', headers:{'Content-Type':'application/json'},
       body: JSON.stringify({names: lines, auto_delete: true, name_only: false})}).then(r=>r.json());
-    if(!r.ok){ alert(r.error || '提交失败'); }
-  } catch(e){ alert('请求失败: ' + e); }
+  }catch(e){ r = {ok:false, error:'请求失败: ' + e}; }
   go.disabled = false; go.textContent = '开始完整验证';
+  if(r.ok){ $('fresult').style.display = 'none'; oppoDone = false; return; }
+  if(r.need_login){
+    savePending('full', lines);
+    const ext = await tryLoginRedirect();
+    $('login-msg').textContent = ext
+      ? '登录态已失效：已自动打开 OPPO 登录页，完成登录后将自动返回并开始完整验证'
+      : '登录态已失效，且扩展未安装：请先「⬇ 下载扩展」安装（一次即可），或登录 OPPO 后再点开始验证';
+    return;
+  }
+  alert(r.error || '提交失败');
 }
 
 /* 初始化必须放在所有 let/const 声明之后（TDZ：提前调用会 ReferenceError 中断整个脚本，
    曾导致徽章卡"检查中"、轮询不启动、打包按钮也不工作） */
 loadApkList();
 startOppoPoll();
+
+// 自动续跑：从 OPPO 登录页返回（?autostart=1）时，恢复挂起的验证任务
+(function(){
+  try{
+    const q = new URLSearchParams(location.search);
+    if(q.get('autostart') !== '1') return;
+    history.replaceState(null, '', location.pathname);
+    const p = takePending();
+    if(!p) return;
+    if(p.kind === 'full'){
+      const radio = document.querySelector('input[name="mode"][value="full"]');
+      if(radio){ radio.checked = true; switchMode(); }
+      $('fnames').value = p.names.join('\\n');
+      doFullBatch();
+    } else {
+      $('onames').value = p.names.join('\\n');
+      doOppoBatch();
+    }
+  }catch(e){}
+})();
 </script>
 </body>
 </html>

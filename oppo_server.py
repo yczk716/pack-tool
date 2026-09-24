@@ -463,9 +463,18 @@ def _build_one(name, pkg, jc):
 
 def start_batch(names, auto_delete=False, name_only=False, sid=""):
     if not os.path.exists(STATE_FILE):
-        return {"ok": False, "error": "尚未登录：请先完成 OPPO 登录再开始批量验证"}
+        return {"ok": False, "need_login": True, "error": "尚未登录：请先完成 OPPO 登录再开始批量验证"}
     if not _probe_session():
-        return {"ok": False, "error": "cookie 已失效：请重新登录后再试"}
+        # gensign 偶发瞬时 800003，1.5s 后二次确认防误报
+        time.sleep(1.5)
+        if not _probe_session():
+            with _lock:
+                _state["logged_in"] = False
+                _state["login_msg"] = "cookie 已失效（验证前预检未通过），请重新登录"
+            return {"ok": False, "need_login": True, "error": "cookie 已失效：请重新登录后再试"}
+    else:
+        with _lock:
+            _state["logged_in"] = True
     names = [n for n in names if n]
     if not name_only and not auto_delete and len(names) > 5:
         return {"ok": False,
