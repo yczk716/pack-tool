@@ -111,12 +111,25 @@ async function focusToolPage(path) {
   } catch (e) { /* ignore */ }
 }
 
+// 带超时的 fetch：服务器无响应时不要永远挂着（popup 会一直显示"回传中…"）
+const FETCH_TIMEOUT = 20000;
+
+async function jfetch(url, opts) {
+  const ctl = new AbortController();
+  const timer = setTimeout(function () { ctl.abort(); }, FETCH_TIMEOUT);
+  try {
+    return await fetch(url, Object.assign({}, opts || {}, { signal: ctl.signal }));
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 // 向服务器确认：服务器自己保存的登录态现在是否还有效（权威判定，1~3 秒）
 // 返回 true / false / null（null = 服务器不可达或返回异常，无法判定）。
 // 关键：null 绝不能被当成"失效"，否则服务器抖一下就会弹出登录页。
 async function serverSessionAlive() {
   try {
-    const r = await fetch(SERVER + "/api/oppo/check_login", { method: "POST" });
+    const r = await jfetch(SERVER + "/api/oppo/check_login", { method: "POST" });
     if (!r.ok) return null;
     const d = await r.json();
     if (!d || typeof d.logged_in !== "boolean") return null;
@@ -153,7 +166,7 @@ async function pushNow(autoOpen) {
                message: "浏览器里没有可用的 OPPO 登录信息，服务器登录态也已失效，请先登录" };
     }
 
-    const r = await fetch(SERVER + "/api/oppo/upload_cookie", {
+    const r = await jfetch(SERVER + "/api/oppo/upload_cookie", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(state)
@@ -188,7 +201,10 @@ async function pushNow(autoOpen) {
              message: "登录态已失效：" + (data.error || data.login_msg || ("HTTP " + r.status)) };
   } catch (e) {
     setBadge("X", "#f56c6c");
-    return { ok: false, count: 0, message: "回传失败：" + e.message };
+    const msg = (e && e.name === "AbortError")
+      ? "服务器响应超时（20 秒），请稍后重试"
+      : "回传失败：" + ((e && e.message) || e);
+    return { ok: false, count: 0, message: msg };
   }
 }
 
@@ -253,7 +269,7 @@ async function pushSilent() {
   try {
     const state = await collectCookies();
     if (!state.cookies.length) return; // 浏览器未登录，静默跳过
-    const r = await fetch(SERVER + "/api/oppo/upload_cookie", {
+    const r = await jfetch(SERVER + "/api/oppo/upload_cookie", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(state)

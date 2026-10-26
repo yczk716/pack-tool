@@ -143,7 +143,7 @@ def main():
     time.sleep(2)
     sh(ssh, f"{sudo}systemctl is-active packtool.service")
     sh(ssh, f"curl -s -o /dev/null -w '%{{http_code}}' http://127.0.0.1:{PORT}/ && echo ''")
-    sh(ssh, f"curl -s http://127.0.0.1:{PORT}/ | grep -c 'OPPO 批量验证' || true")
+    sh(ssh, f"curl -s http://127.0.0.1:{PORT}/ | grep -c '重名验证' || true")  # 页面标题含该词，应为 1
     sh(ssh, f"curl -s http://127.0.0.1:{PORT}/api/oppo/state && echo ''")
     print("=== 更新完成 ===", flush=True)
     ssh.close()
