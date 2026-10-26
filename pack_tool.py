@@ -737,6 +737,12 @@ function checkLogin(){
   fetch('/api/oppo/check_login', {method:'POST'}).then(r=>r.json()).then(v=>renderLogin(v));
 }
 const EXT_ID = 'hkpnpedmkmnhkfmehodmbedcabihpbni';
+const EXT_VERSION = '1.0.1';   // 与 oppo-ext/manifest.json 的 version 保持一致
+function extVerHint(r){
+  if(!r || !r.ver) return '（扩展版本过旧，请在扩展管理页点「重新加载」升级）';
+  if(r.ver !== EXT_VERSION) return '（扩展版本 ' + r.ver + '，请点「重新加载」升级到 ' + EXT_VERSION + '）';
+  return '';
+}
 async function dlExt(){
   const st = $('dl-ext-status');
   const btn = $('dl-ext-btn');
@@ -787,8 +793,8 @@ async function extPush(){
     const r = await chrome.runtime.sendMessage(EXT_ID, {type:'push_oppo', autoOpen:true});
     // 扩展会先向服务器确认是否真的失效，只有确认失效才跳登录页；这里不再重复探活，
     // 徽章由 2.5s 轮询自动刷新（重复探活会把用户正在看的提示顶掉）。
-    if(r && r.ok){ say('✓ ' + r.message); }
-    else if(r){ say('✗ ' + r.message); }
+    if(r && r.ok){ say('✓ ' + r.message + extVerHint(r)); }
+    else if(r){ say('✗ ' + r.message + extVerHint(r)); }
     else { say('扩展无响应：请确认扩展已安装并已启用（edge://extensions）'); }
   }catch(e){
     say('扩展未安装或未启用：请点「⬇ 下载扩展」，解压后到 edge://extensions 打开开发者模式加载（一次即可）。(' + (e.message||e) + ')');

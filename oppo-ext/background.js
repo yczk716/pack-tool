@@ -208,15 +208,23 @@ async function pushNow(autoOpen) {
   }
 }
 
+// 版本号随响应回传：页面据此提示"扩展版本过旧，需重新加载"（旧版仍带误跳登录页的逻辑）
+const VER = (chrome.runtime.getManifest && chrome.runtime.getManifest().version) || "0";
+
+function withVer(r) {
+  if (r && typeof r === "object") r.ver = VER;
+  return r;
+}
+
 // 网页触发（工具页按钮：push_oppo 手动回传 / login_redirect 打开登录页）
 chrome.runtime.onMessageExternal.addListener(function (msg, sender, sendResponse) {
   if (msg && msg.type === "push_oppo") {
-    pushNow(!!msg.autoOpen).then(sendResponse);
+    pushNow(!!msg.autoOpen).then(function (r) { sendResponse(withVer(r)); });
     return true;
   }
   if (msg && msg.type === "login_redirect") {
     openLoginTab();
-    sendResponse({ ok: true, message: "已打开 OPPO 登录页，登录完成后自动返回" });
+    sendResponse(withVer({ ok: true, message: "已打开 OPPO 登录页，登录完成后自动返回" }));
     return;
   }
   sendResponse({ ok: false, message: "未知消息类型" });
@@ -225,7 +233,7 @@ chrome.runtime.onMessageExternal.addListener(function (msg, sender, sendResponse
 // popup 触发
 chrome.runtime.onMessage.addListener(function (msg, sender, sendResponse) {
   if (msg && msg.type === "push_oppo") {
-    pushNow(!!msg.autoOpen).then(sendResponse);
+    pushNow(!!msg.autoOpen).then(function (r) { sendResponse(withVer(r)); });
     return true;
   }
 });
