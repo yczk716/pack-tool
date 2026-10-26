@@ -22,7 +22,7 @@ $("push").addEventListener("click", async function () {
   st.style.background = "#f4f4f5";
   st.textContent = "回传中…";
   try {
-    const r = await chrome.runtime.sendMessage({ type: "push_oppo" });
+    const r = await chrome.runtime.sendMessage({ type: "push_oppo", autoOpen: true });
     st.textContent = (r && r.message) ? r.message : "未知状态";
     if (r && r.ok) st.style.background = "#f0f9eb";
     else if (r) st.style.background = "#fef0f0";

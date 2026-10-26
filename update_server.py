@@ -46,6 +46,21 @@ def sh(ssh, cmd, timeout=120):
     return code, text
 
 
+def _find_node():
+    """定位 node：写死版本号会随 node 升级失效，失效后预检静默跳过（曾踩过）。"""
+    import glob
+    import shutil
+    exe = shutil.which("node")
+    if exe:
+        return exe
+    for pat in ("~/.workbuddy/binaries/node/versions/*/node.exe",
+                "~/.workbuddy/binaries/node/versions/*/node"):
+        hits = sorted(glob.glob(os.path.expanduser(pat)))
+        if hits:
+            return hits[-1]
+    return None
+
+
 def precheck_pack_tool():
     """上传前校验 pack_tool.py：①Python 语法 ②PAGE 内 JS 语法（node --check）。
 
@@ -63,19 +78,24 @@ def precheck_pack_tool():
         if isinstance(node, ast.Assign) and getattr(node.targets[0], "id", "") == "PAGE":
             page = node.value.value
             break
-    if page:
-        m = re.search(r"<script>(.*)</script>", page, re.S)
-        if m:
-            node_exe = r"C:\Users\Administrator\.workbuddy\binaries\node\versions\22.22.2-3\node.exe"
-            if os.path.exists(node_exe):
-                with tempfile.NamedTemporaryFile("w", suffix=".js", delete=False, encoding="utf-8") as tf:
-                    tf.write(m.group(1))
-                    tmp = tf.name
-                r = subprocess.run([node_exe, "--check", tmp], capture_output=True, text=True)
-                os.unlink(tmp)
-                if r.returncode != 0:
-                    sys.exit("PAGE 内 JS 语法校验失败，已阻止部署：\n" + r.stderr[:3000])
-                print("PAGE 内 JS 语法校验通过 (node --check)", flush=True)
+    if not page:
+        sys.exit("预检失败：pack_tool.py 中找不到 PAGE 常量")
+    m = re.search(r"<script>(.*)</script>", page, re.S)
+    if not m:
+        sys.exit("预检失败：PAGE 中找不到 <script> 块")
+    node_exe = _find_node()
+    if not node_exe:
+        sys.exit("预检失败：找不到 node（JS 语法无法校验，拒绝盲部署）")
+    with tempfile.NamedTemporaryFile("w", suffix=".js", delete=False, encoding="utf-8") as tf:
+        tf.write(m.group(1))
+        tmp = tf.name
+    try:
+        r = subprocess.run([node_exe, "--check", tmp], capture_output=True, text=True)
+    finally:
+        os.unlink(tmp)
+    if r.returncode != 0:
+        sys.exit("PAGE 内 JS 语法校验失败，已阻止部署：\n" + r.stderr[:3000])
+    print("PAGE 内 JS 语法校验通过 (node --check, %s)" % node_exe, flush=True)
 
 
 def main():

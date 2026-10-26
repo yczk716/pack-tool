@@ -20,6 +20,7 @@ import subprocess
 import tempfile
 import uuid
 import time
+import urllib.parse
 import zipfile
 import zlib
 try:
@@ -674,6 +675,7 @@ async function doPack(){
 /* ================= OPPO 重名验证 ================= */
 let oppoTimer = null, lastLogLen = 0, oppoDone = false;
 let pollFailCount = 0;
+let loginMsgLockUntil = 0;   // 手动操作提示的保留时间：避免 2.5s 轮询立刻覆盖掉用户正在看的结果
 function oppoPoll(){
   fetch('/api/oppo/progress').then(r=>r.json()).then(d=>{
     pollFailCount = 0;
@@ -700,8 +702,10 @@ function renderLogin(v){
   if(vs === true) set($('vivo-badge'), 'pill ok', 'vivo 正常');
   else if(vs === false) set($('vivo-badge'), 'pill warn', 'vivo 异常');
   else set($('vivo-badge'), 'pill no', 'vivo 未启用');
-  if(v.login_msg) $('login-msg').textContent = v.login_msg;
-  else if(!v.has_cookie) $('login-msg').textContent = 'OPPO 未登录：展开备用方式提交登录态（vivo 列不受影响，无需 vivo 登录）。';
+  if(Date.now() >= loginMsgLockUntil){
+    if(v.login_msg) $('login-msg').textContent = v.login_msg;
+    else if(!v.has_cookie) $('login-msg').textContent = 'OPPO 未登录：展开备用方式提交登录态（vivo 列不受影响，无需 vivo 登录）。';
+  }
   const fh = $('full-login-hint');
   if(fh) fh.style.display = v.logged_in ? 'none' : 'inline';
 }
@@ -774,17 +778,20 @@ async function dlExt(){
 }
 async function extPush(){
   const msg = $('login-msg');
+  const say = t => { msg.textContent = t; loginMsgLockUntil = Date.now() + 15000; };
   if(typeof chrome === 'undefined' || !chrome.runtime || !chrome.runtime.sendMessage){
-    msg.textContent = '当前环境不支持扩展通信：请先「⬇ 下载扩展」并按说明安装（一次即可）'; return;
+    say('当前环境不支持扩展通信：请先「⬇ 下载扩展」并按说明安装（一次即可）'); return;
   }
-  msg.textContent = '正在通过扩展收集并回传登录态…';
+  say('正在通过扩展收集并回传登录态…');
   try{
     const r = await chrome.runtime.sendMessage(EXT_ID, {type:'push_oppo', autoOpen:true});
-    if(r && r.ok){ msg.textContent = '✓ ' + r.message; checkLogin(); }
-    else if(r){ msg.textContent = '✗ ' + r.message; }
-    else { msg.textContent = '扩展无响应：请确认扩展已安装并已启用（edge://extensions）'; }
+    // 扩展会先向服务器确认是否真的失效，只有确认失效才跳登录页；这里不再重复探活，
+    // 徽章由 2.5s 轮询自动刷新（重复探活会把用户正在看的提示顶掉）。
+    if(r && r.ok){ say('✓ ' + r.message); }
+    else if(r){ say('✗ ' + r.message); }
+    else { say('扩展无响应：请确认扩展已安装并已启用（edge://extensions）'); }
   }catch(e){
-    msg.textContent = '扩展未安装或未启用：请点「⬇ 下载扩展」，解压后到 edge://extensions 打开开发者模式加载（一次即可）。(' + (e.message||e) + ')';
+    say('扩展未安装或未启用：请点「⬇ 下载扩展」，解压后到 edge://extensions 打开开发者模式加载（一次即可）。(' + (e.message||e) + ')');
   }
 }
 function uploadCookie(inp){
@@ -895,6 +902,7 @@ async function doOppoBatch(){
     // 登录态失效：挂起任务 → 打开 OPPO 登录页 → 登录成功自动返回续跑
     savePending('oppo', lines);
     const ext = await tryLoginRedirect();
+    loginMsgLockUntil = Date.now() + 15000;
     $('login-msg').textContent = ext
       ? '登录态已失效：已自动打开 OPPO 登录页，完成登录后将自动返回并开始验证这 ' + lines.length + ' 个名称'
       : '登录态已失效，且扩展未安装：请先「⬇ 下载扩展」安装（一次即可），或登录 OPPO 后再点开始验证';
@@ -917,6 +925,7 @@ async function doFullBatch(){
   if(r.need_login){
     savePending('full', lines);
     const ext = await tryLoginRedirect();
+    loginMsgLockUntil = Date.now() + 15000;
     $('login-msg').textContent = ext
       ? '登录态已失效：已自动打开 OPPO 登录页，完成登录后将自动返回并开始完整验证'
       : '登录态已失效，且扩展未安装：请先「⬇ 下载扩展」安装（一次即可），或登录 OPPO 后再点开始验证';
@@ -966,14 +975,15 @@ EXT_README = (
     "4. 点「加载解压缩的扩展」，选择解压出的 oppo-ext 文件夹\n"
     "5. 完成。之后只要这个浏览器里登录着 OPPO 开放平台，扩展就会自动工作\n\n"
     "使用方式：\n"
-    "- 自动：扩展每 10 分钟自动回传一次登录态，保持服务器登录态最新\n"
-    "- 失效提醒：OPPO 会话失效（服务端固定时效约 1~2 小时，无法客户端续命）时弹系统通知，\n"
-    "  点通知直达 OPPO 登录页；重登后扩展自动回传并关闭登录页，无需其他操作\n"
-    "- 手动回传（popup 按钮 / 工具页⚡扩展回传）：若检测到登录态已失效，会自动打开 OPPO 登录页，\n"
-    "  登录成功后自动回传更新并关闭该页面\n"
+    "- 自动：扩展每 30 分钟静默回传一次最新登录态（无通知、无打扰），跟踪 OPPO 的 token 轮换\n"
+    "- 手动回传（popup 按钮 / 工具页⚡扩展回传）：先向服务器确认登录态是否真的失效，\n"
+    "  确认失效才会打开 OPPO 登录页；登录成功后自动回传、关闭登录页并回到工具页续跑验证\n"
+    "- 服务器登录态仍有效时，点回传不会跳登录页（避免误判打扰）\n"
     "- 兼容 Chrome / Edge 等 Chromium 内核浏览器（标准 MV3，无私有 API）\n\n"
     "验证是否生效：扩展图标上会短暂显示 OK（成功）/ X（失败）角标；"
     "工具页的 OPPO 徽章变绿即为登录态有效。\n"
+    "\n注意：扩展升级后请在扩展管理页点一次「重新加载」；"
+    "若提示需要新的权限或扩展被停用，点「启用」即可（仍是一次性操作）。\n"
 )
 
 
@@ -1009,18 +1019,20 @@ class Handler(BaseHTTPRequestHandler):
         return sid
 
     def do_GET(self):
-        if self.path == "/" or self.path.startswith("/index"):
+        # 必须剥离 query：self.path 含 "?a=1" 时精确匹配 "/" 会落空，
+        # 曾导致登录成功回跳 /?autostart=1 返回 {"error": "not found"}
+        path = urllib.parse.urlparse(self.path).path or "/"
+        if path == "/" or path.startswith("/index"):
             self._send(200, PAGE.encode("utf-8"), "text/html; charset=utf-8")
-        elif self.path.startswith("/api/gen_pkg"):
+        elif path.startswith("/api/gen_pkg"):
             self._send(200, {"pkg": gen_package("app")})
-        elif self.path.startswith("/api/open"):
-            import urllib.parse
+        elif path.startswith("/api/open"):
             qs = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
-            path = qs.get("path", [""])[0]
-            if IS_WIN and os.path.isfile(path):
-                subprocess.Popen(["explorer", "/select,", os.path.normpath(path)])
+            apath = qs.get("path", [""])[0]
+            if IS_WIN and os.path.isfile(apath):
+                subprocess.Popen(["explorer", "/select,", os.path.normpath(apath)])
             self._send(200, {"ok": True})
-        elif self.path.startswith("/api/apk/list"):
+        elif path.startswith("/api/apk/list"):
             removed = cleanup_apk_dir()
             files = []
             try:
@@ -1038,8 +1050,7 @@ class Handler(BaseHTTPRequestHandler):
                     pass
             items.sort(key=lambda x: -x["mtime"])
             self._send(200, {"ok": True, "files": items, "cleaned": removed})
-        elif self.path.startswith("/api/apk/download"):
-            import urllib.parse
+        elif path.startswith("/api/apk/download"):
             import zipfile
             import io
             qs = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
@@ -1088,16 +1099,16 @@ class Handler(BaseHTTPRequestHandler):
                              f"attachment; filename=\"{encoded}\"; filename*=UTF-8''{encoded}")
             self.end_headers()
             self.wfile.write(data)
-        elif self.path.startswith("/api/oppo/state"):
+        elif path.startswith("/api/oppo/state"):
             if not OPPO_ENABLED:
                 return self._send(500, {"error": "OPPO 模块不可用"})
             self._send(200, oppo_server.state_snapshot())
-        elif self.path.startswith("/api/oppo/progress"):
+        elif path.startswith("/api/oppo/progress"):
             if not OPPO_ENABLED:
                 return self._send(200, {"vnc": {}, "running": False, "total": 0, "done": 0,
                                         "results": [], "logs": ["OPPO 模块未部署（缺 oppo_server.py 或 playwright）"]})
             self._send(200, oppo_server.progress(self._session_id()))
-        elif self.path.startswith("/api/oppo/extension.zip"):
+        elif path.startswith("/api/oppo/extension.zip"):
             import io as _io
             import zipfile as _zf
             import urllib.parse as _up
@@ -1123,7 +1134,7 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Cache-Control", "no-store")
             self.end_headers()
             self.wfile.write(data)
-        elif self.path.startswith("/api/oppo/report"):
+        elif path.startswith("/api/oppo/report"):
             data = oppo_server.read_report(self._session_id()) if OPPO_ENABLED else None
             if data is None:
                 return self._send(404, {"error": "报告尚未生成"})
@@ -1133,12 +1144,11 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Content-Disposition", "attachment; filename=oppo_report.csv")
             self.end_headers()
             self.wfile.write(data)
-        elif self.path.startswith("/api/download"):
-            import urllib.parse
+        elif path.startswith("/api/download"):
             qs = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
-            path = qs.get("path", [""])[0]
+            fpath = qs.get("path", [""])[0]
             real_out = os.path.realpath(OUTPUT_DIR)
-            real_path = os.path.realpath(path)
+            real_path = os.path.realpath(fpath)
             if not (os.path.isfile(real_path) and real_path.startswith(real_out)):
                 return self._send(403, {"error": "forbidden"})
             fname = os.path.basename(real_path)
@@ -1183,31 +1193,35 @@ class Handler(BaseHTTPRequestHandler):
         except Exception:
             return self._send(400, {"error": "bad request"})
 
-        if self.path == "/api/build":
+        path = urllib.parse.urlparse(self.path).path or "/"
+        if path == "/api/build":
             return self._api_build(data)
 
-        if self.path in ("/api/oppo/start_login", "/api/oppo/check_login",
-                         "/api/oppo/upload_cookie", "/api/oppo/batch",
-                         "/api/oppo/paste_cookie"):
+        if path in ("/api/oppo/start_login", "/api/oppo/check_login",
+                    "/api/oppo/upload_cookie", "/api/oppo/batch",
+                    "/api/oppo/paste_cookie", "/api/vivo/paste_cookie"):
             if not OPPO_ENABLED:
                 return self._send(500, {"error": "OPPO 模块不可用（服务器缺 oppo_server.py 或 playwright）"})
-            if self.path == "/api/oppo/start_login":
+            if path == "/api/oppo/start_login":
                 return self._send(200, oppo_server.start_login())
-            if self.path == "/api/oppo/check_login":
+            if path == "/api/oppo/check_login":
                 return self._send(200, oppo_server.check_login())
-            if self.path == "/api/oppo/upload_cookie":
+            if path == "/api/oppo/upload_cookie":
                 try:
                     oppo_server.save_cookie_state(data)
                 except ValueError as e:
-                    return self._send(400, {"error": str(e)})
+                    # session_dead 只有"候选与服务器同一会话且确已失效"才为 True，
+                    # 扩展据此决定要不要跳登录页（其余拒绝一律不跳）
+                    return self._send(400, {"error": str(e),
+                                            "session_dead": bool(getattr(e, "session_dead", False))})
                 return self._send(200, oppo_server.check_login())
-            if self.path == "/api/oppo/paste_cookie":
+            if path == "/api/oppo/paste_cookie":
                 try:
                     oppo_server.save_pasted_cookies(str(data.get("text") or ""))
                 except ValueError as e:
                     return self._send(400, {"error": str(e)})
                 return self._send(200, oppo_server.check_login())
-            if self.path == "/api/vivo/paste_cookie":
+            if path == "/api/vivo/paste_cookie":
                 try:
                     return self._send(200, oppo_server.save_vivo_cookie(str(data.get("text") or "")))
                 except ValueError as e:

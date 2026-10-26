@@ -62,6 +62,20 @@ _state = {
     "login_running": False,   # 登录浏览器线程活着
     "login_msg": "",
 }
+
+
+class CookieRejected(ValueError):
+    """回传登录态被拒绝。
+
+    session_dead=True 表示"候选与服务器当前是同一会话，且已探明该会话失效"——
+    这是唯一可以确定"需要重新登录"的情形，扩展只在此时才跳登录页。
+    其他拒绝（格式不对 / cookie 太少 / 拿到的是另一个浏览器的死会话）都不能
+    说明服务器当前登录态已失效。
+    """
+
+    def __init__(self, msg, session_dead=False):
+        ValueError.__init__(self, msg)
+        self.session_dead = bool(session_dead)
 class JobCtx(object):
     """单个浏览器会话（pt_sid cookie）的批量任务上下文。
 
@@ -300,12 +314,12 @@ def save_cookie_state(state):
        防止"从另一个未登录浏览器回传，冲掉服务器上原本可用的登录态"。
     """
     if not isinstance(state, dict) or not state.get("cookies"):
-        raise ValueError("文件格式不对：应为此前导出的 storage_state.json（含 cookies 字段）")
+        raise CookieRejected("文件格式不对：应为此前导出的 storage_state.json（含 cookies 字段）")
     cookies = [c for c in state["cookies"] if isinstance(c, dict)]
     names = {c.get("name", "") for c in cookies}
     if len(cookies) < 5 or "sdkLoginToken" not in names:
-        raise ValueError("上传的 cookie 仅 %d 条（需 ≥5 且含 sdkLoginToken），"
-                         "疑似未登录状态，已拒绝保存（防止覆盖服务器上的有效登录态）" % len(cookies))
+        raise CookieRejected("上传的 cookie 仅 %d 条（需 ≥5 且含 sdkLoginToken），"
+                             "疑似未登录状态，已拒绝保存（防止覆盖服务器上的有效登录态）" % len(cookies))
     tmp = STATE_FILE + ".candidate"
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump(state, f, ensure_ascii=False)
@@ -332,8 +346,9 @@ def save_cookie_state(state):
             with _lock:
                 _state["logged_in"] = False
                 _state["login_msg"] = "会话已失效（回传校验未通过），请重新登录"
-            raise ValueError("回传的登录态校验未通过（与服务器当前为同一会话，已同步标记失效），请重新登录 OPPO")
-        raise ValueError("回传的登录态校验未通过，已拒绝保存（不影响服务器当前登录态），请重新登录 OPPO 后再回传")
+            raise CookieRejected("回传的登录态校验未通过（与服务器当前为同一会话，已同步标记失效），请重新登录 OPPO",
+                                 session_dead=True)
+        raise CookieRejected("回传的登录态校验未通过，已拒绝保存（不影响服务器当前登录态），请重新登录 OPPO 后再回传")
     os.replace(tmp, STATE_FILE)
     _log("已保存上传的登录文件（cookie " + str(len(cookies)) + " 条，预校验通过）")
 
@@ -376,26 +391,32 @@ def save_pasted_cookies(text):
 
 _probe_gate = threading.Lock()
 _probe_ts = [0.0]  # 上次自动探活时间戳
-PROBE_RETRY_INTERVAL = 30  # 秒：自动探活最小间隔，避免每次轮询都打接口
+PROBE_RETRY_INTERVAL = 30    # 秒：未登录/待验证时的最小复检间隔
+PROBE_VERIFY_INTERVAL = 900  # 秒：已登录时每 15 分钟复核一次
+
+# 已登录状态下也要周期性复核：徽章若只信缓存，会出现"显示已登录、实际早已失效"，
+# 用户点扩展回传被跳去登录页时会觉得判定自相矛盾。
 
 
 def ensure_login_state():
-    """cookie 文件存在但 logged_in=False 时，后台自动探活一次会话。
+    """后台探活：未登录时尽快复检，已登录时低频复核，避免徽章长期显示过期状态。
 
-    避免"会话其实仍有效、徽章却显示未登录"误导用户重新登录。
-    在 state_snapshot() 里被调用；用独立 _probe_gate 防止重复调度，
-    探活在 daemon 线程执行，绝不阻塞 /api/oppo/state 请求。
+    探活在 daemon 线程执行，绝不阻塞 /api/oppo/state 请求；用独立 _probe_gate 单飞。
     """
     if not os.path.exists(STATE_FILE):
         return
     now = time.time()
+    with _lock:
+        logged_in = bool(_state["logged_in"])
+        busy = bool(_state["login_running"])
+    if busy:  # 正在登录，探测结果必然不准，别去打扰
+        return
+    interval = PROBE_VERIFY_INTERVAL if logged_in else PROBE_RETRY_INTERVAL
     with _probe_gate:
-        if now - _probe_ts[0] < PROBE_RETRY_INTERVAL:
+        if now - _probe_ts[0] < interval:
             return
         _probe_ts[0] = now
-    with _lock:
-        if _state["logged_in"] or _state["login_running"]:
-            return
+
     def _bg():
         try:
             check_login()

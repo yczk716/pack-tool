@@ -1,13 +1,15 @@
 // OPPO 登录态回传助手 - MV3 service worker（标准 API，兼容 Chrome / Edge）
-// 设计：无通知、无页面打扰。仅两类动作：
+// 设计：无通知、无页面打扰。仅三类动作：
 // ① 每 30 分钟静默回传一次最新 cookie（跟踪 OPPO 的 token 轮换，失败静默跳过，全程无感）
-// ② 登录页标签打开期间检测到 sdkLoginToken 变化（用户完成登录）→ 自动回传 → 关登录页 → 回工具页续跑验证
-// 手动触发：popup 按钮 / 工具页⚡扩展回传 / 工具页验证时触发 login_redirect
+// ② 手动回传：先问服务器"现在到底是不是失效了"，只有确认失效才打开登录页
+// ③ 登录页标签打开期间检测到 sdkLoginToken 变化（用户完成登录）→ 自动回传 → 关登录页 → 回工具页续跑验证
 const SERVER = "http://101.43.50.231:8000";
 const ALARM = "silentPush";
 const LOGIN_URL = "https://open.oppomobile.com/public/login/login_page.html";
-let loginTabId = null;
+const LOGIN_KEY = "loginTabId"; // 存 chrome.storage.session：service worker 会被回收，内存变量不可靠
+let loginTabId = null;          // 当前 SW 生命期内的缓存（持久值见 storage.session）
 let loginWaitTimer = null;
+let loginPushing = false;       // 登录后的回传进行中，避免重复触发
 
 function mapSameSite(ss) {
   if (ss === "no_restriction") return "None";
@@ -55,21 +57,41 @@ function setBadge(text, color) {
   } catch (e) { /* ignore */ }
 }
 
+// ---- 登录页标签 id 持久化（MV3 SW 空闲 30s 被回收，只用内存变量会"忘了在等登录"）----
+async function getLoginTabId() {
+  if (loginTabId != null) return loginTabId;
+  try {
+    const o = await chrome.storage.session.get(LOGIN_KEY);
+    const v = o && o[LOGIN_KEY];
+    if (typeof v === "number") { loginTabId = v; return v; }
+  } catch (e) { /* storage 不可用时退化为内存 */ }
+  return null;
+}
+
+async function setLoginTabId(id) {
+  loginTabId = id;
+  try {
+    if (id == null) await chrome.storage.session.remove(LOGIN_KEY);
+    else await chrome.storage.session.set({ [LOGIN_KEY]: id });
+  } catch (e) { /* ignore */ }
+}
+
 // 打开（或复用）OPPO 登录页标签
 async function openLoginTab() {
-  if (loginTabId != null) {
+  const known = await getLoginTabId();
+  if (known != null) {
     try {
-      const t = await chrome.tabs.get(loginTabId);
-      await chrome.tabs.update(loginTabId, { active: true });
+      const t = await chrome.tabs.get(known);
+      await chrome.tabs.update(known, { active: true });
       await chrome.windows.update(t.windowId, { focused: true });
       return;
     } catch (e) {
-      loginTabId = null; // 标签已被关闭
+      await setLoginTabId(null); // 标签已被关闭
     }
   }
   try {
     const tab = await chrome.tabs.create({ url: LOGIN_URL });
-    loginTabId = tab.id;
+    await setLoginTabId(tab.id);
   } catch (e) { /* ignore */ }
 }
 
@@ -89,29 +111,81 @@ async function focusToolPage(path) {
   } catch (e) { /* ignore */ }
 }
 
-// 收集并回传 cookie；autoOpen=true 时失效自动打开登录页
+// 向服务器确认：服务器自己保存的登录态现在是否还有效（权威判定，1~3 秒）
+// 返回 true / false / null（null = 服务器不可达或返回异常，无法判定）。
+// 关键：null 绝不能被当成"失效"，否则服务器抖一下就会弹出登录页。
+async function serverSessionAlive() {
+  try {
+    const r = await fetch(SERVER + "/api/oppo/check_login", { method: "POST" });
+    if (!r.ok) return null;
+    const d = await r.json();
+    if (!d || typeof d.logged_in !== "boolean") return null;
+    return d.logged_in;
+  } catch (e) {
+    return null;
+  }
+}
+
+// 收集并回传 cookie。
+// autoOpen=true 时：只有"浏览器没登录 + 服务器也确认失效"才打开登录页；
+// 服务器登录态仍有效时绝不跳登录页（此前只要回传没通过就跳，导致有效会话被误判）。
 async function pushNow(autoOpen) {
   try {
     const state = await collectCookies();
     const n = state.cookies.length;
+
     if (!n) {
+      // 本浏览器没有 OPPO cookie：可能只是没在这个浏览器登录过，服务器上却是有效的
+      const alive0 = await serverSessionAlive();
+      if (alive0 === true) {
+        setBadge("OK", "#67c23a");
+        return { ok: true, count: 0,
+                 message: "服务器登录态仍然有效（本浏览器没有 OPPO cookie，无需回传，也不会跳登录页）" };
+      }
+      if (alive0 === null) {
+        setBadge("!", "#e6a23c");
+        return { ok: false, count: 0,
+                 message: "本浏览器没有 OPPO cookie，且暂时无法连接验证服务器，请稍后重试（未打开登录页）" };
+      }
       setBadge("!", "#e6a23c");
-      if (autoOpen) openLoginTab();
-      return { ok: false, count: 0, need_login: true, message: "浏览器里没有 OPPO 相关 cookie，请先登录" };
+      if (autoOpen) await openLoginTab();
+      return { ok: false, count: 0, need_login: true,
+               message: "浏览器里没有可用的 OPPO 登录信息，服务器登录态也已失效，请先登录" };
     }
+
     const r = await fetch(SERVER + "/api/oppo/upload_cookie", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(state)
     });
-    const data = await r.json();
+    let data = {};
+    try { data = await r.json(); } catch (e) { data = {}; }
+
     if (r.ok && data.logged_in) {
       setBadge("OK", "#67c23a");
       return { ok: true, count: n, message: "已回传 " + n + " 条 cookie，服务器登录态有效" };
     }
+
+    // 回传被拒：先分清是"真失效"还是"这份 cookie 不可用但服务器另有有效登录态"
+    const dead = data && data.session_dead === true;
+    if (!dead) {
+      const alive = await serverSessionAlive();
+      if (alive === true) {
+        setBadge("OK", "#67c23a");
+        return { ok: true, count: n,
+                 message: "服务器登录态有效，本次回传的 cookie 未通过校验已被忽略（不会覆盖现有登录态）" };
+      }
+      if (alive === null) {
+        setBadge("!", "#e6a23c");
+        return { ok: false, count: n,
+                 message: "本次回传未通过校验，且暂时无法确认服务器登录态（服务器不可达），请稍后重试（未打开登录页）" };
+      }
+    }
+
     setBadge("X", "#f56c6c");
-    if (autoOpen) openLoginTab();
-    return { ok: false, count: n, need_login: true, message: "登录态校验未通过：" + (data.error || data.login_msg || ("HTTP " + r.status)) };
+    if (autoOpen) await openLoginTab();
+    return { ok: false, count: n, need_login: true,
+             message: "登录态已失效：" + (data.error || data.login_msg || ("HTTP " + r.status)) };
   } catch (e) {
     setBadge("X", "#f56c6c");
     return { ok: false, count: 0, message: "回传失败：" + e.message };
@@ -140,25 +214,37 @@ chrome.runtime.onMessage.addListener(function (msg, sender, sendResponse) {
   }
 });
 
-// 登录成功检测：登录页标签打开期间 sdkLoginToken 出现/更新 → 自动回传 → 关登录页 → 回工具页续跑
+// 登录页被用户关掉：清掉等待标记，避免下次 cookie 变化时误触发回传/跳转
+chrome.tabs.onRemoved.addListener(function (tabId) {
+  getLoginTabId().then(function (cur) {
+    if (cur === tabId) setLoginTabId(null);
+  }).catch(function () { });
+});
+
+// 登录成功检测：登录页标签存在期间 sdkLoginToken 出现/更新 → 自动回传 → 关登录页 → 回工具页续跑
 chrome.cookies.onChanged.addListener(function (info) {
   const c = info.cookie;
   if (!c || c.name !== "sdkLoginToken" || !c.value) return;
-  if (loginTabId == null) return; // 没有在等待登录
-  clearTimeout(loginWaitTimer);
-  loginWaitTimer = setTimeout(async function () {
-    const tid = loginTabId;
-    loginTabId = null;
-    const r = await pushNow(false);
-    if (r.ok) {
-      if (tid != null) {
-        try { await chrome.tabs.remove(tid); } catch (e) { /* 已关闭 */ }
+  if (loginPushing) return;
+  getLoginTabId().then(function (tid) {
+    if (tid == null) return; // 没有在等待登录
+    clearTimeout(loginWaitTimer);
+    loginWaitTimer = setTimeout(async function () {
+      if (loginPushing) return;
+      loginPushing = true;
+      try {
+        const r = await pushNow(false);
+        if (r.ok) {
+          await setLoginTabId(null);
+          try { await chrome.tabs.remove(tid); } catch (e) { /* 已关闭 */ }
+          focusToolPage("/?autostart=1");
+        }
+        // 回传未通过：保留 loginTabId，继续等下一次 token 变化
+      } finally {
+        loginPushing = false;
       }
-      focusToolPage("/?autostart=1");
-    } else {
-      loginTabId = tid; // 回传未通过，继续等待
-    }
-  }, 2500); // 等 cookie 全部落定
+    }, 2500); // 等 cookie 全部落定
+  }).catch(function () { });
 });
 
 // 每 30 分钟静默回传：只上传浏览器最新 cookie，跟踪 OPPO 的 token 轮换。
@@ -182,7 +268,11 @@ async function pushSilent() {
   } catch (e) { /* 静默跳过 */ }
 }
 
-chrome.alarms.create(ALARM, { periodInMinutes: 30 });
+// 只在没有同类闹钟时创建：SW 每次被唤醒都会执行本文件，无条件 create 会把 30 分钟倒计时
+// 不断重置（用户频繁访问 OPPO 时静默回传可能永远不触发）。
+chrome.alarms.get(ALARM, function (a) {
+  if (!a) chrome.alarms.create(ALARM, { periodInMinutes: 30 });
+});
 chrome.alarms.onAlarm.addListener(function (a) {
   if (a.name === ALARM) pushSilent();
 });
